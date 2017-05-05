@@ -23,6 +23,10 @@ build_script:
 #on_failure:
 #  - ps: $blockRdp = $true; iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
 
+before_test:
+  - choco install rabbitmq --ignoredependencies -y
+  - ps: (Get-Service -Name RabbitMQ).Status
+
 after_test:
   - ps: dotnet pack -c Release
 
