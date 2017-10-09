@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio 15
-VisualStudioVersion = 15.0.26403.7
+VisualStudioVersion = 15.0.26923.0
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Tests", "Tests", "{70515E66-DAF8-4D18-8F8F-8A2934171AA9}"
 EndProject
@@ -12,7 +12,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		build\common.props = build\common.props
 		README.md = README.md
 		build\sourcelink.props = build\sourcelink.props
-		build\test.props = build\test.props
 	EndProjectSection
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Foundatio.RabbitMQ", "src\Foundatio.RabbitMQ\Foundatio.RabbitMQ.csproj", "{EAE3607D-73A1-4D02-BDAA-24A37DDA15CB}"
@@ -91,5 +90,8 @@ Global
 		{9832E1F4-C826-4704-890A-00F330BC5913} = {70515E66-DAF8-4D18-8F8F-8A2934171AA9}
 		{9C984561-184A-4708-82C0-A9ADA2D13E02} = {AA4CFEA3-A476-4B1C-91C4-C219C6DFC2C2}
 		{D2C982EB-E879-4F5C-BD9E-17445EBA1E26} = {AA4CFEA3-A476-4B1C-91C4-C219C6DFC2C2}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {2D850136-CBAA-4910-B467-4F1243DB267E}
 	EndGlobalSection
 EndGlobal
