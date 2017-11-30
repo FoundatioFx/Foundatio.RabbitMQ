@@ -6,6 +6,10 @@ configuration: Release
 pull_requests:
   do_not_increment_build_number: true
 
+environment:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
 init:
   - git config --global core.autocrlf input
   - ps: $env:GIT_HASH=$env:APPVEYOR_REPO_COMMIT.Substring(0, 10)
@@ -14,7 +18,6 @@ init:
 
 before_build:
   - ps: .\build\Set-BuildVersion -Version $env:APPVEYOR_BUILD_VERSION -Suffix $env:VERSION_SUFFIX
-  - nuget sources add -name Exceptionless -source https://www.myget.org/F/exceptionless/api/v3/index.json
   - appveyor-retry dotnet restore -v Minimal
 
 build_script:
@@ -23,9 +26,12 @@ build_script:
 #on_failure:
 #  - ps: $blockRdp = $true; iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
 
-before_test:
-  - choco install rabbitmq --ignoredependencies -y
-  - ps: (Get-Service -Name RabbitMQ).Status
+before_test: 
+  - choco install rabbitmq --ignoredependencies -y 
+  - ps: (Get-Service -Name RabbitMQ).Status 
+
+test_script:
+  - ps: dotnet test .\test\Foundatio.RabbitMQ.Tests\Foundatio.RabbitMQ.Tests.csproj -f netcoreapp2.0
 
 after_test:
   - ps: dotnet pack -c Release
@@ -51,5 +57,5 @@ deploy:
 notifications:
   - provider: Slack
     auth_token:
-      secure: GniMpFE62HprSyQNQoej/fBOAdbQe8EMWAMMNXX0s2JxeNePjemiO1bCf4eYweE4p70mm0sCwMjeEP/Ps9aTMA==
+      secure: GniMpFE62HprSyQNQoej/VSBnxn2GNnTrca3BnF8+ikMdqduO4Ts4t297teZF6wDAmGwnOtXusctUla8+WxLFkIztvVCS2Z1RG/DvEDYoc0=
     channel: '#notifications'
