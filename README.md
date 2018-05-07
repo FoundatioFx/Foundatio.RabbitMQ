@@ -3,6 +3,7 @@
 [![Build status](https://ci.appveyor.com/api/projects/status/1g3jl70gf7vdv9x9?svg=true)](https://ci.appveyor.com/project/Exceptionless/foundatio-rabbitmq-ngxwl)
 [![NuGet Version](http://img.shields.io/nuget/v/Foundatio.RabbitMQ.svg?style=flat)](https://www.nuget.org/packages/Foundatio.RabbitMQ/)
 [![Slack Status](https://slack.exceptionless.com/badge.svg)](https://slack.exceptionless.com)
+[![Help Contribute to Open Source](https://www.codetriage.com/foundatiofx/foundatio.rabbitmq/badges/users.svg)](https://www.codetriage.com/foundatiofx/foundatio.rabbitmq)
 
 Pluggable foundation blocks for building loosely coupled distributed apps.
 - [Caching](#caching)
