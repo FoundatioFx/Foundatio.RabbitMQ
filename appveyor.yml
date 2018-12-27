@@ -26,8 +26,8 @@ before_build:
     appveyor UpdateBuild -Version $VERSION
 
 build_script:
-  - docker build --target testrunner -t foundatio:test --build-arg VERSION_SUFFIX=${VERSION_SUFFIX} .
   - docker run -d -p 5672:5672 rabbitmq:3.7.8
+  - docker build --target testrunner -t foundatio:test --build-arg VERSION_SUFFIX=${VERSION_SUFFIX} .
   - docker run -e APPVEYOR_API_URL --net=host -v $(pwd)/artifacts:/app/artifacts foundatio:test
 
 after_build:
@@ -36,7 +36,7 @@ after_build:
 
 artifacts:
   - path: artifacts/*.nupkg
-    name: NuGet
+    name: NuGet 
   - path: artifacts/*.trx
     name: Test Results
 
