@@ -15,7 +15,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Foundatio.RabbitMQ", "src\Foundatio.RabbitMQ\Foundatio.RabbitMQ.csproj", "{EAE3607D-73A1-4D02-BDAA-24A37DDA15CB}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Foundatio.RabbitMQ.Tests", "test\Foundatio.RabbitMQ.Tests\Foundatio.RabbitMQ.Tests.csproj", "{9832E1F4-C826-4704-890A-00F330BC5913}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Foundatio.RabbitMQ.Tests", "tests\Foundatio.RabbitMQ.Tests\Foundatio.RabbitMQ.Tests.csproj", "{9832E1F4-C826-4704-890A-00F330BC5913}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Samples", "Samples", "{AA4CFEA3-A476-4B1C-91C4-C219C6DFC2C2}"
 EndProject
