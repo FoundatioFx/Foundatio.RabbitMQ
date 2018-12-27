@@ -4,6 +4,4 @@ services:
   rabbitmq:
     image: rabbitmq:3.7.8
     ports:
-      - "8080:15672"
       - "5672:5672"
-      - "5671:5671"
