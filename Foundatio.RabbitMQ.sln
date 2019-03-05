@@ -19,9 +19,9 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Foundatio.RabbitMQ.Tests", 
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Samples", "Samples", "{AA4CFEA3-A476-4B1C-91C4-C219C6DFC2C2}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Foundatio.RabbitMQPublishConsole", "samples\Foundatio.RabbitMQPublishConsole\Foundatio.RabbitMQPublishConsole.csproj", "{9C984561-184A-4708-82C0-A9ADA2D13E02}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Foundatio.RabbitMQ.Publish", "samples\Foundatio.RabbitMQ.Publish\Foundatio.RabbitMQ.Publish.csproj", "{9C984561-184A-4708-82C0-A9ADA2D13E02}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Foundatio.RabbitMQSubscribeConsole", "samples\Foundatio.RabbitMQSubscribeConsole\Foundatio.RabbitMQSubscribeConsole.csproj", "{D2C982EB-E879-4F5C-BD9E-17445EBA1E26}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Foundatio.RabbitMQ.Subscribe", "samples\Foundatio.RabbitMQ.Subscribe\Foundatio.RabbitMQ.Subscribe.csproj", "{D2C982EB-E879-4F5C-BD9E-17445EBA1E26}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

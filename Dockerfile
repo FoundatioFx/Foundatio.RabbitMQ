@@ -5,13 +5,13 @@ ARG VERSION_SUFFIX=0-dev
 ENV VERSION_SUFFIX=$VERSION_SUFFIX
 
 COPY ./*.sln ./NuGet.config ./
-COPY ./build/*.props ./build/
+COPY ./*/*.props ./
 
 # Copy the main source project files
 COPY src/*/*.csproj ./
 RUN for file in $(ls *.csproj); do mkdir -p src/${file%.*}/ && mv $file src/${file%.*}/; done
 
-# Copy the test project files
+# Copy the sample project files
 COPY samples/*/*.csproj ./
 RUN for file in $(ls *.csproj); do mkdir -p samples/${file%.*}/ && mv $file samples/${file%.*}/; done
 

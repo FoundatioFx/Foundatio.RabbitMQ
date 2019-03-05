@@ -2,10 +2,44 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Publish",
+      "type": "coreclr",
+      "request": "launch",
+      "program": "${workspaceFolder}/samples/Foundatio.RabbitMQ.Publish/bin/Debug/netcoreapp2.2/Foundatio.RabbitMQ.Publish.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/samples/Foundatio.RabbitMQ.Publish",
+      "requireExactSource": false,
+      "console": "integratedTerminal",
+      "stopAtEntry": false,
+      "internalConsoleOptions": "openOnSessionStart"
+    },
+    {
+      "name": "Subscribe",
+      "type": "coreclr",
+      "request": "launch",
+      "program": "${workspaceFolder}/samples/Foundatio.RabbitMQ.Subscribe/bin/Debug/netcoreapp2.2/Foundatio.RabbitMQ.Subscribe.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/samples/Foundatio.RabbitMQ.Subscribe",
+      "requireExactSource": false,
+      "console": "integratedTerminal",
+      "stopAtEntry": false,
+      "internalConsoleOptions": "openOnSessionStart"
+    },
+    {
       "name": ".NET Core Attach",
       "type": "coreclr",
       "request": "attach",
       "processId": "${command:pickProcess}"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Pub/Sub Sample",
+      "preLaunchTask": "build",
+      "configurations": [
+        "Subscribe",
+        "Publish"
+      ]
     }
   ]
 }
