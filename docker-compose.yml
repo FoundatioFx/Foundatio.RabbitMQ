@@ -15,4 +15,5 @@ services:
     image: dadarek/wait-for-dependencies
     command: rabbitmq:15672 rabbitmq-delayed:15672
     depends_on:
+      - rabbitmq
       - rabbitmq-delayed
