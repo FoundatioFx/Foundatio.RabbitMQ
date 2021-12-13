@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Foundatio.AsyncEx;
 using Foundatio.Extensions;
+using Foundatio.Queues;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
@@ -147,7 +148,7 @@ namespace Foundatio.Messaging {
         /// The rule of thumb is: avoid sharing channels across threads.
         /// Publishers in your application that publish from separate threads should use their own channels.
         /// The same is a good idea for consumers.</remarks>
-        protected override Task PublishImplAsync(string messageType, object message, TimeSpan? delay, CancellationToken cancellationToken) {
+        protected override Task PublishImplAsync(string messageType, object message, TimeSpan? delay, QueueEntryOptions options, CancellationToken cancellationToken) {
             byte[] data = SerializeMessageBody(messageType, message);
 
             // if the RabbitMQ plugin is not available then use the base class delay mechanism
