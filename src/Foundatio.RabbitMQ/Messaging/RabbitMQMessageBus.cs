@@ -143,12 +143,13 @@ namespace Foundatio.Messaging {
         /// <param name="messageType"></param>
         /// <param name="message"></param>
         /// <param name="delay">Along with the delay value, _delayExchange should also be set to true</param>
+        /// <param name="options"></param>
         /// <param name="cancellationToken"></param>
         /// <remarks>RabbitMQ has an upper limit of 2GB for messages.BasicPublish blocking AMQP operations.
         /// The rule of thumb is: avoid sharing channels across threads.
         /// Publishers in your application that publish from separate threads should use their own channels.
         /// The same is a good idea for consumers.</remarks>
-        protected override Task PublishImplAsync(string messageType, object message, TimeSpan? delay, QueueEntryOptions options, CancellationToken cancellationToken) {
+        protected override Task PublishImplAsync(string messageType, object message, TimeSpan? delay, MessageOptions options, CancellationToken cancellationToken) {
             byte[] data = SerializeMessageBody(messageType, message);
 
             // if the RabbitMQ plugin is not available then use the base class delay mechanism
