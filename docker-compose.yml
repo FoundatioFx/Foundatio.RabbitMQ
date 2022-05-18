@@ -2,7 +2,7 @@ version: '2'
 
 services:
   rabbitmq:
-    image: rabbitmq:3.9-management
+    image: rabbitmq:3.10-management
     ports:
       - "5672:5672"
       - "8080:15672" # management ui - login with guest:guest
