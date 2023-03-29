@@ -12,7 +12,7 @@ services:
       - "5673:5672"
       - "8081:15672" # management ui - login with guest:guest
   ready:
-    image: dadarek/wait-for-dependencies
+    image: andrewlock/wait-for-dependencies
     command: rabbitmq:15672 rabbitmq-delayed:15672
     depends_on:
       - rabbitmq
