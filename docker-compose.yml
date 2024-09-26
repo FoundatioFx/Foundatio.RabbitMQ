@@ -1,16 +1,24 @@
-version: '2'
-
 services:
   rabbitmq:
     image: rabbitmq:3.10-management
     ports:
       - "5672:5672"
       - "8080:15672" # management ui - login with guest:guest
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
   rabbitmq-delayed:
     build: ./build # use RabbitMQ docker image with delay plugin installed
     ports:
       - "5673:5672"
       - "8081:15672" # management ui - login with guest:guest
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
   ready:
     image: andrewlock/wait-for-dependencies
     command: rabbitmq:15672 rabbitmq-delayed:15672
