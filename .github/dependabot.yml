@@ -10,3 +10,8 @@ updates:
   directory: "/"
   schedule:
     interval: quarterly
+
+- package-ecosystem: "docker-compose"
+  directory: "/"
+  schedule:
+    interval: quarterly
