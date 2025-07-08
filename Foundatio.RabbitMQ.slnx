@@ -1,9 +1,4 @@
 <Solution>
-  <Configurations>
-    <Platform Name="Any CPU" />
-    <Platform Name="x64" />
-    <Platform Name="x86" />
-  </Configurations>
   <Folder Name="/Samples/">
     <Project Path="samples/Foundatio.RabbitMQ.Publish/Foundatio.RabbitMQ.Publish.csproj" />
     <Project Path="samples/Foundatio.RabbitMQ.Subscribe/Foundatio.RabbitMQ.Subscribe.csproj" />
