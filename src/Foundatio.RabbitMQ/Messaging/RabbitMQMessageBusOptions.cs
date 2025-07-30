@@ -64,6 +64,15 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     /// When false (default), the QoS settings apply only to consumers on this channel.
     /// </summary>
     public bool GlobalQos { get; set; }
+
+    /// <summary>
+    /// This applies to classic queues and sets the maximum number of times a message can be delivered (retried) before it is discarded.
+    /// Note: This is not applied to the arguments. This setting is currently only taken into account for classic queues to
+    /// imitate the behavior of quorum queue dead letters.
+    ///
+    /// Setting this to -1 means there is no limit on the number of deliveries.
+    /// </summary>
+    public long DeliveryLimit { get; set; } = 2;
 }
 
 public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<RabbitMQMessageBusOptions, RabbitMQMessageBusOptionsBuilder>
@@ -131,6 +140,12 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
     public RabbitMQMessageBusOptionsBuilder GlobalQos(bool globalQos)
     {
         Target.GlobalQos = globalQos;
+        return this;
+    }
+
+    public RabbitMQMessageBusOptionsBuilder DeliveryLimit(long deliveryLimit)
+    {
+        Target.DeliveryLimit = deliveryLimit;
         return this;
     }
 }
