@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Threading;
@@ -22,6 +23,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private IChannel _publisherChannel;
     private IChannel _subscriberChannel;
     private bool? _delayedExchangePluginEnabled;
+    private readonly bool _isQuorumQueue;
     private bool _isDisposed;
 
     public RabbitMQMessageBus(RabbitMQMessageBusOptions options) : base(options)
@@ -29,10 +31,12 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         if (String.IsNullOrEmpty(options.ConnectionString))
             throw new ArgumentException("ConnectionString is required.");
 
-        // Initialize the connection factory. automatic recovery will allow the connections to be restored
+        _isQuorumQueue = options.Arguments is not null && options.Arguments.TryGetValue("x-queue-type", out object queueType) && queueType is string type && String.Equals(type, "quorum", StringComparison.OrdinalIgnoreCase);
+
+        // Initialize the connection factory. Automatic recovery will allow the connections to be restored
         // in case the server is restarted or there has been any network failures
-        // Topology ( queues, exchanges, bindings and consumers) recovery "TopologyRecoveryEnabled" is already enabled
-        // by default so no need to initialize it. NetworkRecoveryInterval is also by default set to 5 seconds.
+        // Topology (queues, exchanges, bindings and consumers) recovery "TopologyRecoveryEnabled" is already enabled
+        // by default, so no need to initialize it. NetworkRecoveryInterval is also by default set to 5 seconds.
         // it can always be fine-tuned if needed.
         _factory = new ConnectionFactory
         {
@@ -157,11 +161,11 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     private async Task OnMessageAsync(object sender, BasicDeliverEventArgs envelope)
     {
-        _logger.LogTrace("OnMessageAsync({MessageId})", envelope.BasicProperties?.MessageId);
+        _logger.LogTrace("OnMessageAsync({MessageId})", envelope.BasicProperties.MessageId);
 
         if (_subscribers.IsEmpty)
         {
-            _logger.LogTrace("No subscribers ({MessageId})", envelope.BasicProperties?.MessageId);
+            _logger.LogTrace("No subscribers ({MessageId})", envelope.BasicProperties.MessageId);
             if (_options.AcknowledgementStrategy == AcknowledgementStrategy.Automatic)
                 await _subscriberChannel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
 
@@ -178,10 +182,62 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error handling message ({MessageId}): {Message}", envelope.BasicProperties?.MessageId, ex.Message);
+            _logger.LogError(ex, "Error handling message ({MessageId}): {Message}", envelope.BasicProperties.MessageId, ex.Message);
             if (_options.AcknowledgementStrategy == AcknowledgementStrategy.Automatic)
-                await _subscriberChannel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
+                await HandleDeliveryLimitsAsync(envelope).AnyContext();
         }
+    }
+
+    private async Task HandleDeliveryLimitsAsync(BasicDeliverEventArgs envelope)
+    {
+        // TODO: Rework this.
+        if (_isQuorumQueue || _options.DeliveryLimit < 0)
+        {
+            await _subscriberChannel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
+            return;
+        }
+
+        // NOTE: x-delivery-count is set to 1 for the first redelivery (for quorum).
+        long retryCount = envelope.BasicProperties.Headers?.TryGetValue("x-delivery-count", out object xDeliveryCount) is true
+                ? (long)xDeliveryCount
+                : 0;
+        if (retryCount > _options.DeliveryLimit)
+        {
+            _logger.LogDebug(
+                "Message ({MessageId}) has reached the delivery limit of {DeliveryLimit}: Acknowledging message",
+                envelope.BasicProperties.MessageId, _options.DeliveryLimit);
+            await _subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
+            return;
+        }
+
+        string originalMessageId = envelope.BasicProperties.Headers?.TryGetValue("x-original-message-id", out object xOriginalMessageId) is true
+            ? xOriginalMessageId as string
+            : envelope.BasicProperties.MessageId;
+        var headers = new Dictionary<string, object>(envelope.BasicProperties.Headers ?? new Dictionary<string, object>())
+            {
+                ["x-delivery-count"] = retryCount + 1,
+                ["x-original-message-id"] = originalMessageId ?? envelope.BasicProperties.MessageId
+            };
+
+        if (!String.IsNullOrEmpty(Activity.Current?.TraceStateString))
+            headers.Add("TraceState", Activity.Current.TraceStateString);
+
+        // NOTE: We are not using the message unique id here, because we are re-publishing the message.
+        var requeueProperties = new BasicProperties(envelope.BasicProperties)
+        {
+            MessageId = Guid.NewGuid().ToString("N"),
+            Headers = headers
+        };
+
+        // TODO: We are not taking into account any delivery delay here.
+        await EnsureTopicCreatedAsync(envelope.CancellationToken).AnyContext();
+
+        // NOTE: We are not using the cancellation token here, because we are not waiting for publish to complete.
+        using (await _lock.LockAsync().AnyContext())
+            await _publisherChannel.BasicPublishAsync(envelope.Exchange, envelope.RoutingKey, mandatory: false, requeueProperties, envelope.Body.ToArray()).AnyContext();
+
+        await _subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
+        _logger.LogDebug("Republished message ({MessageId}) with with delivery count {DeliveryCount}", retryCount + 1, envelope.BasicProperties.MessageId);
     }
 
     /// <summary>
@@ -327,7 +383,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         {
             MessageId = options.UniqueId ?? Guid.NewGuid().ToString("N"),
             CorrelationId = options.CorrelationId,
-            Type = messageType,
+            Type = messageType
         };
 
         if (_options.IsDurable)
@@ -386,7 +442,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         try
         {
             // This exchange is a delayed exchange (fanout). You need rabbitmq_delayed_message_exchange plugin to RabbitMQ
-            // Disclaimer : https://github.com/rabbitmq/rabbitmq-delayed-message-exchange/
+            // Disclaimer: https://github.com/rabbitmq/rabbitmq-delayed-message-exchange/
             // Please read the *Performance Impact* of the delayed exchange type.
             var args = new Dictionary<string, object> { { "x-delayed-type", ExchangeType.Fanout } };
             await channel.ExchangeDeclareAsync(_options.Topic, "x-delayed-message", _options.IsDurable, false, args).AnyContext();
