@@ -188,56 +188,215 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         }
     }
 
+    /// <summary>
+    /// Handles message delivery limit logic for failed message processing attempts.
+    /// Implements different strategies for quorum queues vs classic queues based on RabbitMQ delivery semantics.
+    /// </summary>
+    /// <param name="envelope">The message delivery arguments containing headers and metadata</param>
+    /// <returns>A task representing the asynchronous operation</returns>
+    /// <remarks>
+    /// Delivery Limit Rules:
+    /// 1. If DeliveryLimit &lt; 0: Message is rejected (requeued) regardless of queue type
+    /// 2. Retry count determination:
+    ///    - Quorum queues: x-delivery-count header is set by broker (absent on first attempt, 1 on first redelivery)
+    ///    - Classic queues: x-delivery-count header only present if we previously added it during requeue
+    /// 3. Over limit behavior:
+    ///    - Classic queues: Acknowledge (drop) the message
+    ///    - Quorum queues: Reject (requeue) and let broker handle via its own delivery-limit policy
+    ///    - Special case: If quorum queue delivery count is +2 over limit, warn and acknowledge (broker config mismatch)
+    /// 4. Under limit behavior:
+    ///    - Quorum queues: Reject (requeue) to let broker manage redelivery
+    ///    - Classic queues: Publish new message with incremented count, then acknowledge original
+    /// </remarks>
     private async Task HandleDeliveryLimitsAsync(BasicDeliverEventArgs envelope)
     {
-        // TODO: Rework this.
-        if (_isQuorumQueue || _options.DeliveryLimit < 0)
+        // Validate channels are available
+        if (_subscriberChannel == null)
         {
+            _logger.LogError("Message ({MessageId}) cannot be processed: subscriber channel is null",
+                envelope.BasicProperties.MessageId);
+            return;
+        }
+
+        // Rule 1: If limit is negative, reject regardless of queue type
+        if (_options.DeliveryLimit < 0)
+        {
+            _logger.LogDebug("Message ({MessageId}) rejected due to negative delivery limit ({DeliveryLimit})",
+                envelope.BasicProperties.MessageId, _options.DeliveryLimit);
             await _subscriberChannel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
             return;
         }
 
-        // NOTE: x-delivery-count is set to 1 for the first redelivery (for quorum).
-        long retryCount = envelope.BasicProperties.Headers?.TryGetValue("x-delivery-count", out object xDeliveryCount) is true
-                ? (long)xDeliveryCount
-                : 0;
-        if (retryCount > _options.DeliveryLimit)
+        // Rule 2: Determine retry count from headers
+        // For quorum queues: x-delivery-count is set by broker (1 on first redelivery, absent on first attempt)
+        // For classic queues: x-delivery-count is only present if we added it during previous requeue
+        long retryCount = 0;
+        if (envelope.BasicProperties.Headers?.TryGetValue("x-delivery-count", out object xDeliveryCount) is true)
         {
-            _logger.LogDebug(
-                "Message ({MessageId}) has reached the delivery limit of {DeliveryLimit}: Acknowledging message",
-                envelope.BasicProperties.MessageId, _options.DeliveryLimit);
-            await _subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
+            if (!long.TryParse(xDeliveryCount.ToString(), out retryCount))
+            {
+                _logger.LogWarning("Message ({MessageId}) has invalid x-delivery-count header value: {HeaderValue}, defaulting to 0",
+                    envelope.BasicProperties.MessageId, xDeliveryCount);
+                retryCount = 0;
+            }
+        }
+
+        _logger.LogDebug("Processing message ({MessageId}) with delivery count {DeliveryCount} against limit {DeliveryLimit} (Queue type: {QueueType})",
+            envelope.BasicProperties.MessageId, retryCount, _options.DeliveryLimit, _isQuorumQueue ? "quorum" : "classic");
+
+        // Rule 3: Handle messages that have exceeded the delivery limit
+        if (retryCount >= _options.DeliveryLimit)
+        {
+            if (_isQuorumQueue)
+            {
+                // Check if we're significantly over the limit (suggests broker config mismatch)
+                if (retryCount >= _options.DeliveryLimit + 2)
+                {
+                    _logger.LogWarning(
+                        "Quorum queue message ({MessageId}) delivery count ({DeliveryCount}) is +2 over configured limit ({DeliveryLimit}). " +
+                        "This suggests the broker's delivery-limit policy may be configured differently. Acknowledging to prevent infinite redelivery.",
+                        envelope.BasicProperties.MessageId, retryCount, _options.DeliveryLimit);
+                    await _subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
+                }
+                else
+                {
+                    // Let the broker handle the delivery limit via its own policy
+                    _logger.LogDebug(
+                        "Quorum queue message ({MessageId}) has exceeded delivery limit ({DeliveryLimit}): Rejecting to let broker handle",
+                        envelope.BasicProperties.MessageId, _options.DeliveryLimit);
+                    await _subscriberChannel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
+                }
+            }
+            else
+            {
+                // Classic queue: acknowledge (drop) the message when limit exceeded
+                _logger.LogDebug(
+                    "Classic queue message ({MessageId}) has reached the delivery limit of {DeliveryLimit}: Acknowledging message",
+                    envelope.BasicProperties.MessageId, _options.DeliveryLimit);
+                await _subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
+            }
             return;
         }
 
+        // Rule 4: Handle messages under the delivery limit
+        try
+        {
+            if (_isQuorumQueue)
+            {
+                // Quorum queue: reject to let broker manage redelivery and delivery counting
+                _logger.LogDebug(
+                    "Quorum queue message ({MessageId}) under delivery limit: Rejecting for broker-managed redelivery",
+                    envelope.BasicProperties.MessageId);
+                await _subscriberChannel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
+            }
+            else
+            {
+                // Classic queue: manually republish with incremented delivery count
+                await RepublishMessageWithIncrementedDeliveryCountAsync(envelope, retryCount).AnyContext();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to handle delivery limits for message ({MessageId}), acknowledging to prevent infinite retry",
+                envelope.BasicProperties.MessageId);
+            try
+            {
+                await _subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
+            }
+            catch (Exception ackEx)
+            {
+                _logger.LogError(ackEx, "Failed to acknowledge message ({MessageId}) after delivery limit handling failure",
+                    envelope.BasicProperties.MessageId);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Republishes a message with an incremented delivery count for classic queues.
+    /// Preserves all original message properties and adds delivery tracking headers.
+    /// </summary>
+    /// <param name="envelope">The original message delivery</param>
+    /// <param name="currentRetryCount">The current retry count</param>
+    /// <returns>A task representing the asynchronous operation</returns>
+    private async Task RepublishMessageWithIncrementedDeliveryCountAsync(BasicDeliverEventArgs envelope, long currentRetryCount)
+    {
+        // Extract original message ID for tracking
         string originalMessageId = envelope.BasicProperties.Headers?.TryGetValue("x-original-message-id", out object xOriginalMessageId) is true
             ? xOriginalMessageId as string
             : envelope.BasicProperties.MessageId;
-        var headers = new Dictionary<string, object>(envelope.BasicProperties.Headers ?? new Dictionary<string, object>())
-            {
-                ["x-delivery-count"] = retryCount + 1,
-                ["x-original-message-id"] = originalMessageId ?? envelope.BasicProperties.MessageId
-            };
 
-        if (!String.IsNullOrEmpty(Activity.Current?.TraceStateString))
-            headers.Add("TraceState", Activity.Current.TraceStateString);
-
-        // NOTE: We are not using the message unique id here, because we are re-publishing the message.
-        var requeueProperties = new BasicProperties(envelope.BasicProperties)
+        // Check if original message had delay
+        TimeSpan? originalDelay = null;
+        if (envelope.BasicProperties.Headers?.TryGetValue("x-delay", out object xDelay) is true)
         {
-            MessageId = Guid.NewGuid().ToString("N"),
-            Headers = headers
+            if (xDelay is int delayMs)
+                originalDelay = TimeSpan.FromMilliseconds(delayMs);
+            else if (int.TryParse(xDelay.ToString(), out int parsedDelay))
+                originalDelay = TimeSpan.FromMilliseconds(parsedDelay);
+        }
+
+        // TODO: If delayed exchange plugin is not available but message had delay,
+        // we currently ignore the delay and republish immediately. Consider implementing
+        // proper delay handling if this becomes a requirement.
+        if (!_delayedExchangePluginEnabled.Value && originalDelay.HasValue && originalDelay.Value > TimeSpan.Zero)
+        {
+            _logger.LogWarning("Message ({MessageId}) had delay ({Delay}ms) but delayed exchange plugin is not available, republishing immediately",
+                envelope.BasicProperties.MessageId, originalDelay.Value.TotalMilliseconds);
+        }
+
+        // Copy all original properties (durability, TTL, etc. are already set correctly)
+        var properties = new BasicProperties(envelope.BasicProperties)
+        {
+            MessageId = Guid.NewGuid().ToString("N") // Generate new ID for republished message
         };
 
-        // TODO: We are not taking into account any delivery delay here.
-        await EnsureTopicCreatedAsync(envelope.CancellationToken).AnyContext();
+        // Update headers with delivery tracking
+        var headers = new Dictionary<string, object>(envelope.BasicProperties.Headers ?? new Dictionary<string, object>())
+        {
+            ["x-delivery-count"] = currentRetryCount + 1,
+            ["x-original-message-id"] = originalMessageId ?? envelope.BasicProperties.MessageId
+        };
 
-        // NOTE: We are not using the cancellation token here, because we are not waiting for publish to complete.
+        // Add current trace state if available
+        if (!String.IsNullOrEmpty(Activity.Current?.TraceStateString))
+            headers["TraceState"] = Activity.Current.TraceStateString;
+
+        properties.Headers = headers;
+
+        try
+        {
+            // Publish the message
+            await EnsureTopicCreatedAsync(envelope.CancellationToken).AnyContext();
+            await PublishMessageAsync(envelope.Exchange, envelope.RoutingKey, envelope.Body.ToArray(), properties, envelope.CancellationToken).AnyContext();
+            await _subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
+
+            _logger.LogDebug("Republished classic queue message ({OriginalMessageId}) with delivery count {DeliveryCount}",
+                originalMessageId, currentRetryCount + 1);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to republish message ({MessageId}), acknowledging to prevent infinite retry",
+                envelope.BasicProperties.MessageId);
+            await _subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
+        }
+    }
+
+    /// <summary>
+    /// Publishes a message using the same underlying mechanism as the main publish method.
+    /// Extracted to ensure consistency between regular publishing and requeuing.
+    /// </summary>
+    /// <param name="exchange">Exchange to publish to</param>
+    /// <param name="routingKey">Routing key for the message</param>
+    /// <param name="body">Message body</param>
+    /// <param name="properties">Message properties</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>A task representing the asynchronous operation</returns>
+    private async Task PublishMessageAsync(string exchange, string routingKey, byte[] body, BasicProperties properties, CancellationToken cancellationToken)
+    {
         using (await _lock.LockAsync().AnyContext())
-            await _publisherChannel.BasicPublishAsync(envelope.Exchange, envelope.RoutingKey, mandatory: false, requeueProperties, envelope.Body.ToArray()).AnyContext();
-
-        await _subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
-        _logger.LogDebug("Republished message ({MessageId}) with with delivery count {DeliveryCount}", retryCount + 1, envelope.BasicProperties.MessageId);
+        {
+            await _publisherChannel.BasicPublishAsync(exchange, routingKey, mandatory: false, properties, body, cancellationToken: cancellationToken).AnyContext();
+        }
     }
 
     /// <summary>
