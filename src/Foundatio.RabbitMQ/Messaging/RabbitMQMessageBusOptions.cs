@@ -146,6 +146,31 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
     public RabbitMQMessageBusOptionsBuilder DeliveryLimit(long deliveryLimit)
     {
         Target.DeliveryLimit = deliveryLimit;
+
+        Target.Arguments ??= new Dictionary<string, object>();
+        Target.Arguments["x-delivery-limit"] = deliveryLimit;
+
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the message bus for RabbitMQ quorum queues using recommended settings.
+    /// Disables auto-delete and exclusive mode for subscription queues,
+    /// and sets quorum-specific arguments based on the current DeliveryLimit value.
+    /// Preserves any existing arguments.
+    /// </summary>
+    /// <returns>The builder instance for method chaining.</returns>
+    public RabbitMQMessageBusOptionsBuilder UseQuorumQueues()
+    {
+        Target.SubscriptionQueueAutoDelete = false;
+        Target.IsSubscriptionQueueExclusive = false;
+
+        Target.Arguments ??= new Dictionary<string, object>();
+
+        // Add or update quorum-specific arguments
+        Target.Arguments["x-queue-type"] = "quorum";
+        Target.Arguments["x-delivery-limit"] = Target.DeliveryLimit;
+
         return this;
     }
 }

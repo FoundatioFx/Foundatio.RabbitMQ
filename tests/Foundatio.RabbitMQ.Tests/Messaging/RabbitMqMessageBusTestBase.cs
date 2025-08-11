@@ -20,16 +20,9 @@ public abstract class RabbitMqMessageBusTestBase(string connectionString, ITestO
     {
         return new RabbitMQMessageBus(o =>
         {
-            //o.Topic(_topic);
             o.SubscriptionQueueName($"{_topic}_{Guid.NewGuid():N}");
-            o.SubscriptionQueueAutoDelete(false);
-            o.IsSubscriptionQueueExclusive(false);
             o.ConnectionString(ConnectionString);
-            o.Arguments(new System.Collections.Generic.Dictionary<string, object>
-            {
-                { "x-queue-type", "quorum" },
-                { "x-delivery-limit", 2 }
-            });
+            o.UseQuorumQueues();
             o.LoggerFactory(Log);
 
             config?.Invoke(o.Target);
@@ -159,16 +152,9 @@ public abstract class RabbitMqMessageBusTestBase(string connectionString, ITestO
         string topic = $"test_topic_poisoned_{DateTime.UtcNow.Ticks}";
         await using var messageBus = new RabbitMQMessageBus(o => o
             .ConnectionString(ConnectionString)
-            //.Topic(topic)
             .SubscriptionQueueName($"{topic}_{Guid.NewGuid():N}")
-            .SubscriptionQueueAutoDelete(false)
-            .IsSubscriptionQueueExclusive(false)
             .AcknowledgementStrategy(AcknowledgementStrategy.Automatic)
-            .Arguments(new System.Collections.Generic.Dictionary<string, object>
-            {
-                { "x-queue-type", "quorum" },
-                { "x-delivery-limit", 2 }
-            })
+            .UseQuorumQueues()
             .LoggerFactory(Log));
 
         long handlerInvocations = 0;
@@ -200,7 +186,6 @@ public abstract class RabbitMqMessageBusTestBase(string connectionString, ITestO
         var messageBus1 = new RabbitMQMessageBus(o => o
             .ConnectionString(ConnectionString)
             .LoggerFactory(Log)
-            //.Topic(_topic)
             .SubscriptionQueueName($"{_topic}-offline")
             .IsSubscriptionQueueExclusive(false)
             .SubscriptionQueueAutoDelete(false)
@@ -241,7 +226,6 @@ public abstract class RabbitMqMessageBusTestBase(string connectionString, ITestO
         var messageBus2 = new RabbitMQMessageBus(o => o
             .ConnectionString(ConnectionString)
             .LoggerFactory(Log)
-            //.Topic(_topic)
             .SubscriptionQueueName($"{_topic}-offline")
             .IsSubscriptionQueueExclusive(false)
             .SubscriptionQueueAutoDelete(false)
