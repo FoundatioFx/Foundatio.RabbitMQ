@@ -66,9 +66,8 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     public bool GlobalQos { get; set; }
 
     /// <summary>
-    /// This applies to classic queues and sets the maximum number of times a message can be delivered (retried) before it is discarded.
-    /// Note: This is not applied to the arguments. This setting is currently only taken into account for classic queues to
-    /// imitate the behavior of quorum queue dead letters.
+    /// Sets the maximum number of times a message can be delivered (retried) before it is discarded. If using
+    /// classic queues, we will republish the message with an x-delivery-count header and acknowledge the previous message.
     ///
     /// Setting this to -1 means there is no limit on the number of deliveries.
     /// </summary>
