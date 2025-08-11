@@ -16,6 +16,9 @@ namespace Foundatio.Messaging;
 
 public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAsyncDisposable
 {
+    private const string XDeliveryCountHeader = "x-delivery-count";
+    private const string XOriginalMessageIdHeader = "x-original-message-id";
+
     private readonly AsyncLock _lock = new();
     private readonly ConnectionFactory _factory;
     private IConnection _publisherConnection;
@@ -220,9 +223,9 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         }
 
         // Rule 2: Determine retry count from headers
-        long retryCount = GetRetryCount(envelope);
+        long retryCount = GetRetryCountFromHeader(envelope);
 
-        _logger.LogDebug("Processing message ({MessageId}) with delivery count {DeliveryCount} against limit {DeliveryLimit} (Queue type: {QueueType})",
+        _logger.LogDebug("Processing message ({MessageId}) with delivery count {DeliveryCount} of {DeliveryLimit} (Queue type: {QueueType})",
             envelope.BasicProperties.MessageId, retryCount, _options.DeliveryLimit, _isQuorumQueue ? "quorum" : "classic");
 
         // Rule 3: Handle messages that have exceeded the delivery limit
@@ -276,22 +279,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     }
 
     /// <summary>
-    /// For quorum queues: x-delivery-count is set by broker (1 on first redelivery, absent on the first attempt)
-    /// For classic queues: x-delivery-count is only present if we added it during previous requeue
-    /// </summary>
-    private static long GetRetryCount(BasicDeliverEventArgs envelope)
-    {
-        long retryCount = 0;
-        if (envelope.BasicProperties.Headers?.TryGetValue("x-delivery-count", out object xDeliveryCount) is true)
-        {
-            if (!Int64.TryParse(xDeliveryCount.ToString(), out retryCount))
-                retryCount = 0;
-        }
-
-        return retryCount;
-    }
-
-    /// <summary>
     /// Republishes a message with an incremented delivery count for classic queues.
     /// Preserves all original message properties and adds delivery tracking headers.
     ///
@@ -302,11 +289,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     /// <returns>A task representing the asynchronous operation</returns>
     private async Task RepublishMessageWithIncrementedDeliveryCountAsync(BasicDeliverEventArgs envelope, long currentRetryCount)
     {
-        // Extract original message ID for tracking
-        string originalMessageId = envelope.BasicProperties.Headers?.TryGetValue("x-original-message-id", out object xOriginalMessageId) is true
-            ? xOriginalMessageId as string
-            : envelope.BasicProperties.MessageId;
-
+        string originalMessageId = GetOriginalMessageIdFromHeader(envelope);
         var properties = new BasicProperties(envelope.BasicProperties)
         {
             MessageId = Guid.NewGuid().ToString("N") // Generate new ID for a republished message
@@ -314,8 +297,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
         var headers = new Dictionary<string, object>(envelope.BasicProperties.Headers ?? new Dictionary<string, object>())
         {
-            ["x-delivery-count"] = currentRetryCount + 1,
-            ["x-original-message-id"] = originalMessageId ?? envelope.BasicProperties.MessageId
+            [XDeliveryCountHeader] = currentRetryCount + 1,
+            [XOriginalMessageIdHeader] = originalMessageId
         };
 
         // Add current trace state if available
@@ -339,6 +322,39 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             _logger.LogError(ex, "Failed to republish message ({MessageId}), acknowledging to prevent infinite retry", envelope.BasicProperties.MessageId);
             await _subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
         }
+    }
+
+    /// <summary>
+    /// For quorum queues: x-delivery-count is set by broker (1 on first redelivery, absent on the first attempt)
+    /// For classic queues: x-delivery-count is only present if we added it during previous requeue
+    /// </summary>
+    private static long GetRetryCountFromHeader(BasicDeliverEventArgs envelope)
+    {
+        long retryCount = 0;
+        if (envelope.BasicProperties.Headers?.TryGetValue(XDeliveryCountHeader, out object xDeliveryCount) is true)
+        {
+            if (!Int64.TryParse(xDeliveryCount.ToString(), out retryCount))
+                retryCount = 0;
+        }
+
+        return retryCount;
+    }
+
+    private static string GetOriginalMessageIdFromHeader(BasicDeliverEventArgs envelope)
+    {
+        if (envelope.BasicProperties.Headers?.TryGetValue(XOriginalMessageIdHeader, out object xOriginalMessageId) is true)
+        {
+            // RabbitMQ stores headers as byte arrays, so we need to handle both string and byte array cases
+            return xOriginalMessageId switch
+            {
+                string str => str,
+                byte[] bytes => Encoding.UTF8.GetString(bytes),
+                _ => xOriginalMessageId?.ToString()
+            };
+        }
+
+        // If no original message ID found in headers, use the current message ID (this is the first message)
+        return envelope.BasicProperties.MessageId;
     }
 
     /// <summary>
