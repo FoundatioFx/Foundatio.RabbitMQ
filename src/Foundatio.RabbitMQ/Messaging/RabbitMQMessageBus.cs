@@ -191,26 +191,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         }
     }
 
-    /// <summary>
-    /// Handles message delivery limit logic for failed message processing attempts.
-    /// Implements different strategies for quorum queues vs classic queues based on RabbitMQ delivery semantics.
-    /// </summary>
-    /// <param name="envelope">The message delivery arguments containing headers and metadata</param>
-    /// <returns>A task representing the asynchronous operation</returns>
-    /// <remarks>
-    /// Delivery Limit Rules:
-    /// 1. If DeliveryLimit &lt; 0: Message is rejected (requeued) regardless of queue type
-    /// 2. Retry count determination:
-    ///    - Quorum queues: x-delivery-count header is set by broker (absent on first attempt, 1 on first redelivery)
-    ///    - Classic queues: x-delivery-count header only present if we previously added it during requeue
-    /// 3. Over limit behavior:
-    ///    - Classic queues: Acknowledge (drop) the message
-    ///    - Quorum queues: Reject (requeue) and let broker handle via its own delivery-limit policy
-    ///    - Special case: If quorum queue delivery count is +2 over limit, warn and acknowledge (broker config mismatch)
-    /// 4. Under limit behavior:
-    ///    - Quorum queues: Reject (requeue) to let broker manage redelivery
-    ///    - Classic queues: Publish new message with incremented count, then acknowledge original
-    /// </remarks>
     private async Task HandleDeliveryLimitsAsync(BasicDeliverEventArgs envelope)
     {
         // Rule 1: If the limit is negative, reject regardless of queue type
@@ -243,7 +223,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
                 }
                 else
                 {
-                    // Let the broker handle the delivery limit via its own policy
                     _logger.LogDebug(
                         "Quorum queue message ({MessageId}) has exceeded delivery limit ({DeliveryLimit}): Rejecting to let broker handle",
                         envelope.BasicProperties.MessageId, _options.DeliveryLimit);
@@ -252,7 +231,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             }
             else
             {
-                // Classic queue: acknowledge (drop) the message when limit exceeded
                 _logger.LogDebug(
                     "Classic queue message ({MessageId}) has reached the delivery limit of {DeliveryLimit}: Acknowledging message",
                     envelope.BasicProperties.MessageId, _options.DeliveryLimit);
@@ -265,7 +243,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         // Rule 4: Handle messages under the delivery limit
         if (_isQuorumQueue)
         {
-            // Quorum queue: reject to let broker manage redelivery and delivery counting
             _logger.LogDebug(
                 "Quorum queue message ({MessageId}) under delivery limit: Rejecting for broker-managed redelivery",
                 envelope.BasicProperties.MessageId);
@@ -273,26 +250,16 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         }
         else
         {
-            // Classic queue: manually republish with incremented delivery count
             await RepublishMessageWithIncrementedDeliveryCountAsync(envelope, retryCount).AnyContext();
         }
     }
 
-    /// <summary>
-    /// Republishes a message with an incremented delivery count for classic queues.
-    /// Preserves all original message properties and adds delivery tracking headers.
-    ///
-    /// NOTE: If a message has a delay and there is no delayed exchange plugin installed the message will be published immediately.
-    /// </summary>
-    /// <param name="envelope">The original message delivery</param>
-    /// <param name="currentRetryCount">The current retry count</param>
-    /// <returns>A task representing the asynchronous operation</returns>
     private async Task RepublishMessageWithIncrementedDeliveryCountAsync(BasicDeliverEventArgs envelope, long currentRetryCount)
     {
         string originalMessageId = GetOriginalMessageIdFromHeader(envelope);
         var properties = new BasicProperties(envelope.BasicProperties)
         {
-            MessageId = Guid.NewGuid().ToString("N") // Generate new ID for a republished message
+            MessageId = Guid.NewGuid().ToString("N")
         };
 
         var headers = new Dictionary<string, object>(envelope.BasicProperties.Headers ?? new Dictionary<string, object>())
@@ -301,7 +268,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             [XOriginalMessageIdHeader] = originalMessageId
         };
 
-        // Add current trace state if available
         if (!String.IsNullOrEmpty(Activity.Current?.TraceStateString))
             headers["TraceState"] = Activity.Current.TraceStateString;
 
@@ -309,7 +275,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
         try
         {
-            // Publish the message
             await EnsureTopicCreatedAsync(envelope.CancellationToken).AnyContext();
             await PublishMessageAsync(envelope.Exchange, envelope.RoutingKey, envelope.Body.ToArray(), properties, envelope.CancellationToken).AnyContext();
             await _subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
@@ -344,7 +309,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     {
         if (envelope.BasicProperties.Headers?.TryGetValue(XOriginalMessageIdHeader, out object xOriginalMessageId) is true)
         {
-            // RabbitMQ stores headers as byte arrays, so we need to handle both string and byte array cases
             return xOriginalMessageId switch
             {
                 string str => str,
@@ -353,20 +317,9 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             };
         }
 
-        // If no original message ID found in headers, use the current message ID (this is the first message)
         return envelope.BasicProperties.MessageId;
     }
 
-    /// <summary>
-    /// Publishes a message using the same underlying mechanism as the main publish method.
-    /// Extracted to ensure consistency between regular publishing and requeuing.
-    /// </summary>
-    /// <param name="exchange">Exchange to publish to</param>
-    /// <param name="routingKey">Routing key for the message</param>
-    /// <param name="body">Message body</param>
-    /// <param name="properties">Message properties</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>A task representing the asynchronous operation</returns>
     private async Task PublishMessageAsync(string exchange, string routingKey, byte[] body, BasicProperties properties, CancellationToken cancellationToken)
     {
         using (await _lock.LockAsync().AnyContext())
@@ -375,11 +328,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         }
     }
 
-    /// <summary>
-    /// Get MessageBusData from a RabbitMQ delivery
-    /// </summary>
-    /// <param name="envelope">The RabbitMQ delivery arguments</param>
-    /// <returns>The MessageBusData for the message</returns>
     protected virtual IMessage ConvertToMessage(BasicDeliverEventArgs envelope)
     {
         var message = new Message(envelope.Body.ToArray(), DeserializeMessageBody)
