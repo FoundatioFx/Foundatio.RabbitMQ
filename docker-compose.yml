@@ -1,6 +1,6 @@
 services:
   rabbitmq:
-    image: rabbitmq:4.1.4-management
+    image: rabbitmq:4.2.2-management
     ports:
       - "5672:5672"
       - "8080:15672" # management ui - login with guest:guest
