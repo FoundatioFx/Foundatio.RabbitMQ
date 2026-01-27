@@ -1,0 +1,126 @@
+# Chaos Testing Docker Compose Configuration
+#
+# 3-node RabbitMQ cluster with constrained resources for chaos testing.
+# Each node has slightly different limits so failures cascade predictably.
+#
+# Quick start:
+#   ./scripts/Start.ps1       # Start cluster and form it automatically
+#   ./scripts/FillDisk.ps1    # Trigger disk alarm
+#   ./scripts/KillNode.ps1 1  # Kill node 1
+
+services:
+  # Node 1 - Most constrained (50MB disk, 384MB memory) - fails first
+  rabbitmq-1:
+    image: rabbitmq:4.2.2-management
+    container_name: chaos-rabbitmq-1
+    hostname: rabbitmq-1
+    ports:
+      - "5672:5672"     # Primary AMQP port
+      - "15672:15672"   # Primary Management UI
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+        reservations:
+          memory: 192M
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_ERLANG_COOKIE: "chaos-testing-cookie"
+      RABBITMQ_NODENAME: rabbit@rabbitmq-1
+    volumes:
+      - ./config/rabbitmq-1.conf:/etc/rabbitmq/conf.d/99-limits.conf:ro
+    tmpfs:
+      - /var/lib/rabbitmq:size=50M,mode=1777
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - chaos-network
+
+  # Node 2 - Medium constraints (75MB disk, 448MB memory)
+  rabbitmq-2:
+    image: rabbitmq:4.2.2-management
+    container_name: chaos-rabbitmq-2
+    hostname: rabbitmq-2
+    ports:
+      - "5673:5672"
+      - "15673:15672"
+    deploy:
+      resources:
+        limits:
+          memory: 448M
+        reservations:
+          memory: 224M
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_ERLANG_COOKIE: "chaos-testing-cookie"
+      RABBITMQ_NODENAME: rabbit@rabbitmq-2
+    volumes:
+      - ./config/rabbitmq-2.conf:/etc/rabbitmq/conf.d/99-limits.conf:ro
+    tmpfs:
+      - /var/lib/rabbitmq:size=75M,mode=1777
+    depends_on:
+      rabbitmq-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - chaos-network
+
+  # Node 3 - Least constrained (100MB disk, 512MB memory) - fails last
+  rabbitmq-3:
+    image: rabbitmq:4.2.2-management
+    container_name: chaos-rabbitmq-3
+    hostname: rabbitmq-3
+    ports:
+      - "5674:5672"
+      - "15674:15672"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_ERLANG_COOKIE: "chaos-testing-cookie"
+      RABBITMQ_NODENAME: rabbit@rabbitmq-3
+    volumes:
+      - ./config/rabbitmq-3.conf:/etc/rabbitmq/conf.d/99-limits.conf:ro
+    tmpfs:
+      - /var/lib/rabbitmq:size=100M,mode=1777
+    depends_on:
+      rabbitmq-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - chaos-network
+
+  ready:
+    image: andrewlock/wait-for-dependencies
+    command: rabbitmq-1:15672 rabbitmq-2:15672 rabbitmq-3:15672
+    depends_on:
+      - rabbitmq-1
+      - rabbitmq-2
+      - rabbitmq-3
+    networks:
+      - chaos-network
+
+networks:
+  chaos-network:
+    driver: bridge
