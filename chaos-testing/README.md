@@ -66,20 +66,6 @@ dotnet run
 
 ---
 
-### Single node connection
-
-```powershell
-cd samples/Foundatio.RabbitMQ.Subscribe
-dotnet run --connection-string "amqp://guest:guest@localhost:5672"
-```
-
-```powershell
-cd samples/Foundatio.RabbitMQ.Publish
-dotnet run --connection-string "amqp://guest:guest@localhost:5672"
-```
-
----
-
 ### Failover connection (all 3 nodes)
 
 ```powershell
@@ -94,39 +80,30 @@ dotnet run --connection-string "amqp://guest:guest@localhost:5672,localhost:5673
 
 ---
 
+### Connect to specific node
+
+```powershell
+cd samples/Foundatio.RabbitMQ.Subscribe
+dotnet run --connection-string "amqp://guest:guest@localhost:5673"
+```
+
+```powershell
+cd samples/Foundatio.RabbitMQ.Publish
+dotnet run --connection-string "amqp://guest:guest@localhost:5673"
+```
+
+---
+
 ### Durable queues (survive restarts)
 
 ```powershell
 cd samples/Foundatio.RabbitMQ.Subscribe
-dotnet run --connection-string "amqp://guest:guest@localhost:5672" --durable
+dotnet run --durable
 ```
 
 ```powershell
 cd samples/Foundatio.RabbitMQ.Publish
-dotnet run --connection-string "amqp://guest:guest@localhost:5672" --durable
-```
-
----
-
-### Large messages (1MB - memory pressure)
-
-```powershell
-cd samples/Foundatio.RabbitMQ.Publish
-dotnet run --connection-string "amqp://guest:guest@localhost:5672" --message-size 1048576
-```
-
----
-
-### Delayed messages
-
-```powershell
-cd samples/Foundatio.RabbitMQ.Subscribe
-dotnet run --delayed
-```
-
-```powershell
-cd samples/Foundatio.RabbitMQ.Publish
-dotnet run --delayed
+dotnet run --durable
 ```
 
 ---
@@ -141,6 +118,29 @@ dotnet run --connection-string "amqp://guest:guest@localhost:5672,localhost:5673
 ```powershell
 cd samples/Foundatio.RabbitMQ.Publish
 dotnet run --connection-string "amqp://guest:guest@localhost:5672,localhost:5673,localhost:5674" --durable
+```
+
+---
+
+### Large messages (1MB - memory pressure)
+
+```powershell
+cd samples/Foundatio.RabbitMQ.Publish
+dotnet run --message-size 1048576
+```
+
+---
+
+### Delayed messages
+
+```powershell
+cd samples/Foundatio.RabbitMQ.Subscribe
+dotnet run --delayed
+```
+
+```powershell
+cd samples/Foundatio.RabbitMQ.Publish
+dotnet run --delayed
 ```
 
 ---
