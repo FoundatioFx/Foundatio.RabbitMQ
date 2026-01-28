@@ -75,10 +75,12 @@ dotnet run --hosts "localhost:5672,localhost:5673,localhost:5674"
 
 ```powershell
 cd samples/Foundatio.RabbitMQ.Publish
-dotnet run --hosts "localhost:5672,localhost:5673,localhost:5674"
+dotnet run --hosts "localhost:5672,localhost:5673,localhost:5674" --interval 1000
 ```
 
 The `--hosts` option provides a list of hosts to try in order. If the first host is unavailable, it tries the next one.
+
+The `--interval` option auto-sends messages at the specified interval (in milliseconds). Useful for watching message flow.
 
 ---
 
