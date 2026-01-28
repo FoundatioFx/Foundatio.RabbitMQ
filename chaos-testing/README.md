@@ -70,13 +70,15 @@ dotnet run
 
 ```powershell
 cd samples/Foundatio.RabbitMQ.Subscribe
-dotnet run --connection-string "amqp://guest:guest@localhost:5672,localhost:5673,localhost:5674"
+dotnet run --hosts "localhost:5672,localhost:5673,localhost:5674"
 ```
 
 ```powershell
 cd samples/Foundatio.RabbitMQ.Publish
-dotnet run --connection-string "amqp://guest:guest@localhost:5672,localhost:5673,localhost:5674"
+dotnet run --hosts "localhost:5672,localhost:5673,localhost:5674"
 ```
+
+The `--hosts` option provides a list of hosts to try in order. If the first host is unavailable, it tries the next one.
 
 ---
 
@@ -112,12 +114,12 @@ dotnet run --durable
 
 ```powershell
 cd samples/Foundatio.RabbitMQ.Subscribe
-dotnet run --connection-string "amqp://guest:guest@localhost:5672,localhost:5673,localhost:5674" --durable
+dotnet run --hosts "localhost:5672,localhost:5673,localhost:5674" --durable
 ```
 
 ```powershell
 cd samples/Foundatio.RabbitMQ.Publish
-dotnet run --connection-string "amqp://guest:guest@localhost:5672,localhost:5673,localhost:5674" --durable
+dotnet run --hosts "localhost:5672,localhost:5673,localhost:5674" --durable
 ```
 
 ---
