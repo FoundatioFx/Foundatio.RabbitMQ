@@ -2,6 +2,44 @@
 
 A 3-node RabbitMQ cluster with constrained resources for testing failure scenarios.
 
+## Sample App Command-Line Options
+
+### Publisher Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--connection-string` | RabbitMQ connection string (credentials and vhost) | `amqp://localhost:5672` |
+| `--hosts` | Comma-separated list of hosts for failover | _(none)_ |
+| `--topic` | Message topic/exchange name | `sample-topic` |
+| `--durable` | Use durable queues that survive broker restarts | `false` |
+| `--delayed` | Use delayed exchange (connects to port 5673) | `false` |
+| `--acknowledgment-strategy` | `fireandforget` or `automatic` | `fireandforget` |
+| `--publisher-confirms` | Wait for broker confirmation before returning (guarantees delivery) | `false` |
+| `--message-size` | Target message size in bytes (pads Notes field) | `0` |
+| `--prefetch-count` | Consumer prefetch count | `10` |
+| `--delivery-limit` | Maximum delivery attempts before discarding | `2` |
+| `--delay-seconds` | Delay in seconds before message delivery | `0` |
+| `--interval` | Auto-send interval in ms (0 = manual mode) | `0` |
+| `--log-level` | Log level: `Trace`, `Debug`, `Information`, `Warning`, `Error`, `Critical`, `None` | `Information` |
+
+### Subscriber Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--connection-string` | RabbitMQ connection string (credentials and vhost) | `amqp://localhost:5672` |
+| `--hosts` | Comma-separated list of hosts for failover | _(none)_ |
+| `--topic` | Message topic/exchange name | `sample-topic` |
+| `--durable` | Use durable queues that survive broker restarts | `false` |
+| `--delayed` | Use delayed exchange (connects to port 5673) | `false` |
+| `--acknowledgment-strategy` | `fireandforget` or `automatic` | `fireandforget` |
+| `--prefetch-count` | Consumer prefetch count | `10` |
+| `--delivery-limit` | Maximum delivery attempts before discarding | `2` |
+| `--subscriber-count` | Number of concurrent subscribers | `1` |
+| `--group-id` | Subscriber group identifier for queue naming | `sample-subscriber` |
+| `--log-level` | Log level: `Trace`, `Debug`, `Information`, `Warning`, `Error`, `Critical`, `None` | `Information` |
+
+---
+
 ## Cluster Nodes
 
 | Node | AMQP Port | Management UI              | Disk Limit | Memory Limit |
@@ -152,6 +190,43 @@ dotnet run --delayed
 ## Chaos Commands
 
 Run these while your apps are connected:
+
+### Disk Alarm Testing (Connection Blocked)
+
+When RabbitMQ's disk alarm triggers, the broker sends a `connection.blocked` notification. The Foundatio.RabbitMQ library now **throws a `MessageBusException`** when attempting to publish on a blocked connection, preventing silent message loss.
+
+**Test this behavior:**
+
+```powershell
+# Terminal 1: Start subscriber
+cd samples/Foundatio.RabbitMQ.Subscribe
+dotnet run --hosts "localhost:5672,localhost:5673,localhost:5674"
+
+# Terminal 2: Start publisher with auto-send
+cd samples/Foundatio.RabbitMQ.Publish
+dotnet run --hosts "localhost:5672,localhost:5673,localhost:5674" --interval 1000
+
+# Terminal 3: Trigger disk alarm
+cd chaos-testing
+./scripts/FillDisk.ps1
+```
+
+**Expected behavior:**
+- Publisher logs: `Publisher connection blocked: low disk space`
+- Subsequent publish attempts throw `MessageBusException: Cannot publish: publisher connection is blocked by broker (resource alarm)`
+- After clearing disk: `Publisher connection unblocked` and publishing resumes
+
+```powershell
+./scripts/ClearDisk.ps1
+```
+
+**Official Documentation:**
+- [Blocked Connection Notifications](https://www.rabbitmq.com/docs/connection-blocked)
+- [Memory and Disk Alarms](https://www.rabbitmq.com/docs/alarms)
+
+---
+
+### Other Chaos Commands
 
 ```powershell
 ./scripts/FillDisk.ps1
