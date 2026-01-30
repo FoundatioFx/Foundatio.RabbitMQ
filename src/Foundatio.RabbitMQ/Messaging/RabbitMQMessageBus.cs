@@ -367,6 +367,10 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     {
         using (await _lock.LockAsync().AnyContext())
         {
+            // Final check inside lock to eliminate race condition between early check and publish
+            if (_isPublisherBlocked)
+                throw new MessageBusException($"Cannot publish: publisher connection is blocked by broker ({_publisherBlockedReason ?? "resource alarm"})");
+
             // Wrap only the transport call in resilience policy
             await _resiliencePolicy.ExecuteAsync(async _ =>
                 await _publisherChannel.BasicPublishAsync(exchange, routingKey, mandatory: false, properties, body, cancellationToken: cancellationToken),
