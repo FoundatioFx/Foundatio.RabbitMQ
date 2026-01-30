@@ -29,6 +29,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private bool? _delayedExchangePluginEnabled;
     private readonly bool _isQuorumQueue;
     private bool _isDisposed;
+    private volatile bool _isPublisherBlocked;
+    private volatile string _publisherBlockedReason;
 
     public RabbitMQMessageBus(RabbitMQMessageBusOptions options) : base(options)
     {
@@ -408,7 +410,17 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             // the exchange with the publisher queue. It requires the name of our exchange, exchange type, durability and auto-delete.
             // For now, we are using same autoDelete for both exchange and queue (it will survive a server restart)
             _publisherConnection = await CreateConnectionAsync().AnyContext();
-            _publisherChannel = await _publisherConnection.CreateChannelAsync(cancellationToken: cancellationToken).AnyContext();
+            if (_options.PublisherConfirmsEnabled)
+            {
+                var channelOptions = new CreateChannelOptions(
+                    publisherConfirmationsEnabled: true,
+                    publisherConfirmationTrackingEnabled: true);
+                _publisherChannel = await _publisherConnection.CreateChannelAsync(channelOptions, cancellationToken).AnyContext();
+            }
+            else
+            {
+                _publisherChannel = await _publisherConnection.CreateChannelAsync(cancellationToken: cancellationToken).AnyContext();
+            }
 
             // We first attempt to create "x-delayed-type". For this plugin should be installed.
             // However, we plug in is not installed this will throw an exception. In that case
@@ -423,7 +435,17 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
                 await _publisherConnection.DisposeAsync().AnyContext();
 
                 _publisherConnection = await CreateConnectionAsync().AnyContext();
-                _publisherChannel = await _publisherConnection.CreateChannelAsync(cancellationToken: cancellationToken).AnyContext();
+                if (_options.PublisherConfirmsEnabled)
+                {
+                    var channelOptions = new CreateChannelOptions(
+                        publisherConfirmationsEnabled: true,
+                        publisherConfirmationTrackingEnabled: true);
+                    _publisherChannel = await _publisherConnection.CreateChannelAsync(channelOptions, cancellationToken).AnyContext();
+                }
+                else
+                {
+                    _publisherChannel = await _publisherConnection.CreateChannelAsync(cancellationToken: cancellationToken).AnyContext();
+                }
                 await CreateRegularExchangeAsync(_publisherChannel).AnyContext();
             }
 
@@ -447,6 +469,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     private Task OnPublisherConnectionOnConnectionBlockedAsync(object sender, ConnectionBlockedEventArgs e)
     {
+        _publisherBlockedReason = e.Reason;
+        _isPublisherBlocked = true;
         _logger.LogError("Publisher connection blocked: {Reason}", e.Reason);
         return Task.CompletedTask;
     }
@@ -465,6 +489,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     private Task OnPublisherConnectionOnConnectionUnblockedAsync(object sender, AsyncEventArgs e)
     {
+        _isPublisherBlocked = false;
+        _publisherBlockedReason = null;
         _logger.LogInformation("Publisher connection unblocked");
         return Task.CompletedTask;
     }
@@ -494,6 +520,9 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     /// The same is a good idea for consumers.</remarks>
     protected override async Task PublishImplAsync(string messageType, object message, MessageOptions options, CancellationToken cancellationToken)
     {
+        if (_isPublisherBlocked)
+            throw new MessageBusException($"Cannot publish: publisher connection is blocked by broker ({_publisherBlockedReason ?? "resource alarm"})");
+
         byte[] data = SerializeMessageBody(messageType, message);
 
         // if the RabbitMQ plugin is not available, then use the base class delay mechanism
