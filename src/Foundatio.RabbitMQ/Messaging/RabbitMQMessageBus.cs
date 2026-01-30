@@ -503,6 +503,9 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     private Task OnPublisherConnectionOnRecoverySucceededAsync(object sender, AsyncEventArgs e)
     {
+        // Reset blocked state on recovery - the new connection starts unblocked
+        _isPublisherBlocked = false;
+        _publisherBlockedReason = null;
         _logger.LogInformation("Publisher connection recovery succeeded");
         return Task.CompletedTask;
     }
