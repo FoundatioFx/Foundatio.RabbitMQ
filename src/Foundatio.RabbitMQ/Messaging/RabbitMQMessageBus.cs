@@ -93,14 +93,14 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     protected override async Task EnsureTopicSubscriptionAsync(CancellationToken cancellationToken)
     {
-        if (_subscriberChannel != null)
+        if (_subscriberChannel is not null)
             return;
 
         await EnsureTopicCreatedAsync(cancellationToken).AnyContext();
 
         using (await _lock.LockAsync().AnyContext())
         {
-            if (_subscriberChannel != null)
+            if (_subscriberChannel is not null)
                 return;
 
             _subscriberConnection = await CreateConnectionAsync().AnyContext();
@@ -386,7 +386,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             UniqueId = envelope.BasicProperties.MessageId
         };
 
-        if (envelope.BasicProperties.Headers != null)
+        if (envelope.BasicProperties.Headers is not null)
             foreach (var header in envelope.BasicProperties.Headers)
             {
                 if (header.Value is byte[] byteData)
@@ -400,12 +400,12 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     protected override async Task EnsureTopicCreatedAsync(CancellationToken cancellationToken)
     {
-        if (_publisherChannel != null)
+        if (_publisherChannel is not null)
             return;
 
         using (await _lock.LockAsync().AnyContext())
         {
-            if (_publisherChannel != null)
+            if (_publisherChannel is not null)
                 return;
 
             // Create the client connection, channel, declares the exchange, queue and binds
@@ -657,7 +657,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
         _isDisposed = true;
 
-        if (_factory != null)
+        if (_factory is not null)
             _factory.AutomaticRecoveryEnabled = false;
 
         ClosePublisherConnection();
@@ -674,7 +674,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
         _isDisposed = true;
 
-        if (_factory != null)
+        if (_factory is not null)
             _factory.AutomaticRecoveryEnabled = false;
 
         await ClosePublisherConnectionAsync().AnyContext();
@@ -684,20 +684,20 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     private void ClosePublisherConnection()
     {
-        if (_publisherConnection == null)
+        if (_publisherConnection is null)
             return;
 
         using (_lock.Lock())
         {
             _logger.LogTrace("ClosePublisherConnection");
 
-            if (_publisherChannel != null)
+            if (_publisherChannel is not null)
             {
                 _publisherChannel.Dispose();
                 _publisherChannel = null;
             }
 
-            if (_publisherConnection != null)
+            if (_publisherConnection is not null)
             {
                 UnregisterPublisherConnectionEventHandlers();
                 _publisherConnection.Dispose();
@@ -708,20 +708,20 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     private async Task ClosePublisherConnectionAsync()
     {
-        if (_publisherConnection == null)
+        if (_publisherConnection is null)
             return;
 
         using (await _lock.LockAsync().AnyContext())
         {
             _logger.LogTrace("ClosePublisherConnectionAsync");
 
-            if (_publisherChannel != null)
+            if (_publisherChannel is not null)
             {
                 await _publisherChannel.DisposeAsync().AnyContext();
                 _publisherChannel = null;
             }
 
-            if (_publisherConnection != null)
+            if (_publisherConnection is not null)
             {
                 UnregisterPublisherConnectionEventHandlers();
                 await _publisherConnection.DisposeAsync().AnyContext();
@@ -732,26 +732,26 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     private void CloseSubscriberConnection()
     {
-        if (_subscriberConnection == null)
+        if (_subscriberConnection is null)
             return;
 
         using (_lock.Lock())
         {
             _logger.LogTrace("CloseSubscriberConnection");
 
-            if (_consumer != null)
+            if (_consumer is not null)
             {
                 UnregisterConsumerEventHandlers();
                 _consumer = null;
             }
 
-            if (_subscriberChannel != null)
+            if (_subscriberChannel is not null)
             {
                 _subscriberChannel.Dispose();
                 _subscriberChannel = null;
             }
 
-            if (_subscriberConnection != null)
+            if (_subscriberConnection is not null)
             {
                 UnregisterSubscriberConnectionEventHandlers();
                 _subscriberConnection.Dispose();
@@ -762,26 +762,26 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     private async Task CloseSubscriberConnectionAsync()
     {
-        if (_subscriberConnection == null)
+        if (_subscriberConnection is null)
             return;
 
         using (await _lock.LockAsync().AnyContext())
         {
             _logger.LogTrace("CloseSubscriberConnectionAsync");
 
-            if (_consumer != null)
+            if (_consumer is not null)
             {
                 UnregisterConsumerEventHandlers();
                 _consumer = null;
             }
 
-            if (_subscriberChannel != null)
+            if (_subscriberChannel is not null)
             {
                 await _subscriberChannel.DisposeAsync().AnyContext();
                 _subscriberChannel = null;
             }
 
-            if (_subscriberConnection != null)
+            if (_subscriberConnection is not null)
             {
                 UnregisterSubscriberConnectionEventHandlers();
                 await _subscriberConnection.DisposeAsync().AnyContext();
