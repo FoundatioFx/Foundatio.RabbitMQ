@@ -415,6 +415,20 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             // the exchange with the publisher queue. It requires the name of our exchange, exchange type, durability and auto-delete.
             // For now, we are using same autoDelete for both exchange and queue (it will survive a server restart)
             _publisherConnection = await CreateConnectionAsync().AnyContext();
+
+            // Register event handlers immediately after connection creation to catch any blocked events
+            _publisherConnection.CallbackExceptionAsync += OnPublisherConnectionOnCallbackExceptionAsync;
+            _publisherConnection.ConnectionBlockedAsync += OnPublisherConnectionOnConnectionBlockedAsync;
+            _publisherConnection.ConnectionRecoveryErrorAsync += OnPublisherConnectionOnConnectionRecoveryErrorAsync;
+            _publisherConnection.ConnectionShutdownAsync += OnPublisherConnectionOnConnectionShutdownAsync;
+            _publisherConnection.ConnectionUnblockedAsync += OnPublisherConnectionOnConnectionUnblockedAsync;
+            _publisherConnection.RecoveringConsumerAsync += OnPublisherConnectionOnRecoveringConsumerAsync;
+            _publisherConnection.RecoverySucceededAsync += OnPublisherConnectionOnRecoverySucceededAsync;
+
+            // Reset blocked state after handlers are registered - new connections start unblocked
+            _isPublisherBlocked = false;
+            _publisherBlockedReason = null;
+
             if (_options.PublisherConfirmsEnabled)
             {
                 var channelOptions = new CreateChannelOptions(
@@ -440,6 +454,20 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
                 await _publisherConnection.DisposeAsync().AnyContext();
 
                 _publisherConnection = await CreateConnectionAsync().AnyContext();
+
+                // Register event handlers on the new connection
+                _publisherConnection.CallbackExceptionAsync += OnPublisherConnectionOnCallbackExceptionAsync;
+                _publisherConnection.ConnectionBlockedAsync += OnPublisherConnectionOnConnectionBlockedAsync;
+                _publisherConnection.ConnectionRecoveryErrorAsync += OnPublisherConnectionOnConnectionRecoveryErrorAsync;
+                _publisherConnection.ConnectionShutdownAsync += OnPublisherConnectionOnConnectionShutdownAsync;
+                _publisherConnection.ConnectionUnblockedAsync += OnPublisherConnectionOnConnectionUnblockedAsync;
+                _publisherConnection.RecoveringConsumerAsync += OnPublisherConnectionOnRecoveringConsumerAsync;
+                _publisherConnection.RecoverySucceededAsync += OnPublisherConnectionOnRecoverySucceededAsync;
+
+                // Reset blocked state after handlers are registered
+                _isPublisherBlocked = false;
+                _publisherBlockedReason = null;
+
                 if (_options.PublisherConfirmsEnabled)
                 {
                     var channelOptions = new CreateChannelOptions(
@@ -453,14 +481,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
                 }
                 await CreateRegularExchangeAsync(_publisherChannel).AnyContext();
             }
-
-            _publisherConnection.CallbackExceptionAsync += OnPublisherConnectionOnCallbackExceptionAsync;
-            _publisherConnection.ConnectionBlockedAsync += OnPublisherConnectionOnConnectionBlockedAsync;
-            _publisherConnection.ConnectionRecoveryErrorAsync += OnPublisherConnectionOnConnectionRecoveryErrorAsync;
-            _publisherConnection.ConnectionShutdownAsync += OnPublisherConnectionOnConnectionShutdownAsync;
-            _publisherConnection.ConnectionUnblockedAsync += OnPublisherConnectionOnConnectionUnblockedAsync;
-            _publisherConnection.RecoveringConsumerAsync += OnPublisherConnectionOnRecoveringConsumerAsync;
-            _publisherConnection.RecoverySucceededAsync += OnPublisherConnectionOnRecoverySucceededAsync;
 
             _logger.LogTrace("The unique channel number for the publisher is : {ChannelNumber}", _publisherChannel.ChannelNumber);
         }
