@@ -88,7 +88,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     protected override Task RemoveTopicSubscriptionAsync()
     {
         _logger.LogTrace("RemoveTopicSubscriptionAsync");
-        return CloseSubscriberConnectionAsync();
+        return CloseSubscriberConnectionAsync(DisposedCancellationToken);
     }
 
     protected override async Task EnsureTopicSubscriptionAsync(CancellationToken cancellationToken)
@@ -98,7 +98,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
         await EnsureTopicCreatedAsync(cancellationToken).AnyContext();
 
-        using (await _lock.LockAsync().AnyContext())
+        using (await _lock.LockAsync(cancellationToken).AnyContext())
         {
             if (_subscriberChannel is not null)
                 return;
@@ -362,7 +362,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     private async Task PublishMessageAsync(string exchange, string routingKey, byte[] body, BasicProperties properties, CancellationToken cancellationToken)
     {
-        using (await _lock.LockAsync().AnyContext())
+        using (await _lock.LockAsync(cancellationToken).AnyContext())
         {
             await _resiliencePolicy.ExecuteAsync(async _ =>
             {
@@ -403,7 +403,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         if (_publisherChannel is not null)
             return;
 
-        using (await _lock.LockAsync().AnyContext())
+        using (await _lock.LockAsync(cancellationToken).AnyContext())
         {
             if (_publisherChannel is not null)
                 return;
@@ -660,9 +660,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         if (_factory is not null)
             _factory.AutomaticRecoveryEnabled = false;
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        ClosePublisherConnection(cts.Token);
-        CloseSubscriberConnection(cts.Token);
+        ClosePublisherConnection();
+        CloseSubscriberConnection();
         GC.SuppressFinalize(this);
     }
 
@@ -678,9 +677,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         if (_factory is not null)
             _factory.AutomaticRecoveryEnabled = false;
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await ClosePublisherConnectionAsync(cts.Token).AnyContext();
-        await CloseSubscriberConnectionAsync(cts.Token).AnyContext();
+        await ClosePublisherConnectionAsync().AnyContext();
+        await CloseSubscriberConnectionAsync().AnyContext();
         GC.SuppressFinalize(this);
     }
 
@@ -708,12 +706,12 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         }
     }
 
-    private async Task ClosePublisherConnectionAsync(CancellationToken cancellationToken = default)
+    private async Task ClosePublisherConnectionAsync()
     {
         if (_publisherConnection is null)
             return;
 
-        using (await _lock.LockAsync(cancellationToken).AnyContext())
+        using (await _lock.LockAsync().AnyContext())
         {
             _logger.LogTrace("ClosePublisherConnectionAsync");
 
