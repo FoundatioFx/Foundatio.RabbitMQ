@@ -186,66 +186,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         return Task.CompletedTask;
     }
 
-    private void RegisterPublisherConnectionEventHandlers()
-    {
-        _publisherConnection.CallbackExceptionAsync += OnPublisherConnectionOnCallbackExceptionAsync;
-        _publisherConnection.ConnectionBlockedAsync += OnPublisherConnectionOnConnectionBlockedAsync;
-        _publisherConnection.ConnectionRecoveryErrorAsync += OnPublisherConnectionOnConnectionRecoveryErrorAsync;
-        _publisherConnection.ConnectionShutdownAsync += OnPublisherConnectionOnConnectionShutdownAsync;
-        _publisherConnection.ConnectionUnblockedAsync += OnPublisherConnectionOnConnectionUnblockedAsync;
-        _publisherConnection.RecoveringConsumerAsync += OnPublisherConnectionOnRecoveringConsumerAsync;
-        _publisherConnection.RecoverySucceededAsync += OnPublisherConnectionOnRecoverySucceededAsync;
-    }
-
-    private void UnregisterPublisherConnectionEventHandlers()
-    {
-        _publisherConnection.CallbackExceptionAsync -= OnPublisherConnectionOnCallbackExceptionAsync;
-        _publisherConnection.ConnectionBlockedAsync -= OnPublisherConnectionOnConnectionBlockedAsync;
-        _publisherConnection.ConnectionRecoveryErrorAsync -= OnPublisherConnectionOnConnectionRecoveryErrorAsync;
-        _publisherConnection.ConnectionShutdownAsync -= OnPublisherConnectionOnConnectionShutdownAsync;
-        _publisherConnection.ConnectionUnblockedAsync -= OnPublisherConnectionOnConnectionUnblockedAsync;
-        _publisherConnection.RecoveringConsumerAsync -= OnPublisherConnectionOnRecoveringConsumerAsync;
-        _publisherConnection.RecoverySucceededAsync -= OnPublisherConnectionOnRecoverySucceededAsync;
-    }
-
-    private void RegisterSubscriberConnectionEventHandlers()
-    {
-        _subscriberConnection.CallbackExceptionAsync += OnSubscriberConnectionOnCallbackExceptionAsync;
-        _subscriberConnection.ConnectionBlockedAsync += OnSubscriberConnectionOnConnectionBlockedAsync;
-        _subscriberConnection.ConnectionRecoveryErrorAsync += OnSubscriberConnectionOnConnectionRecoveryErrorAsync;
-        _subscriberConnection.ConnectionShutdownAsync += OnSubscriberConnectionOnConnectionShutdownAsync;
-        _subscriberConnection.ConnectionUnblockedAsync += OnSubscriberConnectionOnConnectionUnblockedAsync;
-        _subscriberConnection.RecoveringConsumerAsync += OnSubscriberConnectionOnRecoveringConsumerAsync;
-        _subscriberConnection.RecoverySucceededAsync += OnSubscriberConnectionOnRecoverySucceededAsync;
-    }
-
-    private void UnregisterSubscriberConnectionEventHandlers()
-    {
-        _subscriberConnection.CallbackExceptionAsync -= OnSubscriberConnectionOnCallbackExceptionAsync;
-        _subscriberConnection.ConnectionBlockedAsync -= OnSubscriberConnectionOnConnectionBlockedAsync;
-        _subscriberConnection.ConnectionRecoveryErrorAsync -= OnSubscriberConnectionOnConnectionRecoveryErrorAsync;
-        _subscriberConnection.ConnectionShutdownAsync -= OnSubscriberConnectionOnConnectionShutdownAsync;
-        _subscriberConnection.ConnectionUnblockedAsync -= OnSubscriberConnectionOnConnectionUnblockedAsync;
-        _subscriberConnection.RecoveringConsumerAsync -= OnSubscriberConnectionOnRecoveringConsumerAsync;
-        _subscriberConnection.RecoverySucceededAsync -= OnSubscriberConnectionOnRecoverySucceededAsync;
-    }
-
-    private void RegisterConsumerEventHandlers()
-    {
-        _consumer.ReceivedAsync += OnMessageAsync;
-        _consumer.ShutdownAsync += OnConsumerShutdownAsync;
-    }
-
-    private void UnregisterConsumerEventHandlers()
-    {
-        if (_consumer == null)
-            return;
-
-        _consumer.ReceivedAsync -= OnMessageAsync;
-        _consumer.ShutdownAsync -= OnConsumerShutdownAsync;
-        _consumer = null;
-    }
-
     private Task OnConsumerShutdownAsync(object sender, ShutdownEventArgs e)
     {
         _logger.LogInformation(e.Exception, "Consumer shutdown. Reply Code: {ReplyCode} Reason: {ReplyText} Initiator: {Initiator}", e.ReplyCode, e.ReplyText, e.Initiator);
@@ -799,7 +739,11 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         {
             _logger.LogTrace("CloseSubscriberConnection");
 
-            UnregisterConsumerEventHandlers();
+            if (_consumer != null)
+            {
+                UnregisterConsumerEventHandlers();
+                _consumer = null;
+            }
 
             if (_subscriberChannel != null)
             {
@@ -825,7 +769,11 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         {
             _logger.LogTrace("CloseSubscriberConnectionAsync");
 
-            UnregisterConsumerEventHandlers();
+            if (_consumer != null)
+            {
+                UnregisterConsumerEventHandlers();
+                _consumer = null;
+            }
 
             if (_subscriberChannel != null)
             {
@@ -859,5 +807,61 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         return Int32.TryParse(trimmed[(colonIndex + 1)..], out int port)
             ? new AmqpTcpEndpoint(hostname, port)
             : new AmqpTcpEndpoint(trimmed, defaultPort);
+    }
+
+    private void RegisterPublisherConnectionEventHandlers()
+    {
+        _publisherConnection.CallbackExceptionAsync += OnPublisherConnectionOnCallbackExceptionAsync;
+        _publisherConnection.ConnectionBlockedAsync += OnPublisherConnectionOnConnectionBlockedAsync;
+        _publisherConnection.ConnectionRecoveryErrorAsync += OnPublisherConnectionOnConnectionRecoveryErrorAsync;
+        _publisherConnection.ConnectionShutdownAsync += OnPublisherConnectionOnConnectionShutdownAsync;
+        _publisherConnection.ConnectionUnblockedAsync += OnPublisherConnectionOnConnectionUnblockedAsync;
+        _publisherConnection.RecoveringConsumerAsync += OnPublisherConnectionOnRecoveringConsumerAsync;
+        _publisherConnection.RecoverySucceededAsync += OnPublisherConnectionOnRecoverySucceededAsync;
+    }
+
+    private void UnregisterPublisherConnectionEventHandlers()
+    {
+        _publisherConnection.CallbackExceptionAsync -= OnPublisherConnectionOnCallbackExceptionAsync;
+        _publisherConnection.ConnectionBlockedAsync -= OnPublisherConnectionOnConnectionBlockedAsync;
+        _publisherConnection.ConnectionRecoveryErrorAsync -= OnPublisherConnectionOnConnectionRecoveryErrorAsync;
+        _publisherConnection.ConnectionShutdownAsync -= OnPublisherConnectionOnConnectionShutdownAsync;
+        _publisherConnection.ConnectionUnblockedAsync -= OnPublisherConnectionOnConnectionUnblockedAsync;
+        _publisherConnection.RecoveringConsumerAsync -= OnPublisherConnectionOnRecoveringConsumerAsync;
+        _publisherConnection.RecoverySucceededAsync -= OnPublisherConnectionOnRecoverySucceededAsync;
+    }
+
+    private void RegisterSubscriberConnectionEventHandlers()
+    {
+        _subscriberConnection.CallbackExceptionAsync += OnSubscriberConnectionOnCallbackExceptionAsync;
+        _subscriberConnection.ConnectionBlockedAsync += OnSubscriberConnectionOnConnectionBlockedAsync;
+        _subscriberConnection.ConnectionRecoveryErrorAsync += OnSubscriberConnectionOnConnectionRecoveryErrorAsync;
+        _subscriberConnection.ConnectionShutdownAsync += OnSubscriberConnectionOnConnectionShutdownAsync;
+        _subscriberConnection.ConnectionUnblockedAsync += OnSubscriberConnectionOnConnectionUnblockedAsync;
+        _subscriberConnection.RecoveringConsumerAsync += OnSubscriberConnectionOnRecoveringConsumerAsync;
+        _subscriberConnection.RecoverySucceededAsync += OnSubscriberConnectionOnRecoverySucceededAsync;
+    }
+
+    private void UnregisterSubscriberConnectionEventHandlers()
+    {
+        _subscriberConnection.CallbackExceptionAsync -= OnSubscriberConnectionOnCallbackExceptionAsync;
+        _subscriberConnection.ConnectionBlockedAsync -= OnSubscriberConnectionOnConnectionBlockedAsync;
+        _subscriberConnection.ConnectionRecoveryErrorAsync -= OnSubscriberConnectionOnConnectionRecoveryErrorAsync;
+        _subscriberConnection.ConnectionShutdownAsync -= OnSubscriberConnectionOnConnectionShutdownAsync;
+        _subscriberConnection.ConnectionUnblockedAsync -= OnSubscriberConnectionOnConnectionUnblockedAsync;
+        _subscriberConnection.RecoveringConsumerAsync -= OnSubscriberConnectionOnRecoveringConsumerAsync;
+        _subscriberConnection.RecoverySucceededAsync -= OnSubscriberConnectionOnRecoverySucceededAsync;
+    }
+
+    private void RegisterConsumerEventHandlers()
+    {
+        _consumer.ReceivedAsync += OnMessageAsync;
+        _consumer.ShutdownAsync += OnConsumerShutdownAsync;
+    }
+
+    private void UnregisterConsumerEventHandlers()
+    {
+        _consumer.ReceivedAsync -= OnMessageAsync;
+        _consumer.ShutdownAsync -= OnConsumerShutdownAsync;
     }
 }
