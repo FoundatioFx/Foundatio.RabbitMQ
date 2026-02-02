@@ -660,8 +660,9 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         if (_factory is not null)
             _factory.AutomaticRecoveryEnabled = false;
 
-        ClosePublisherConnection();
-        CloseSubscriberConnection();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        ClosePublisherConnection(cts.Token);
+        CloseSubscriberConnection(cts.Token);
         GC.SuppressFinalize(this);
     }
 
@@ -677,17 +678,18 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         if (_factory is not null)
             _factory.AutomaticRecoveryEnabled = false;
 
-        await ClosePublisherConnectionAsync().AnyContext();
-        await CloseSubscriberConnectionAsync().AnyContext();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await ClosePublisherConnectionAsync(cts.Token).AnyContext();
+        await CloseSubscriberConnectionAsync(cts.Token).AnyContext();
         GC.SuppressFinalize(this);
     }
 
-    private void ClosePublisherConnection()
+    private void ClosePublisherConnection(CancellationToken cancellationToken = default)
     {
         if (_publisherConnection is null)
             return;
 
-        using (_lock.Lock())
+        using (_lock.Lock(cancellationToken))
         {
             _logger.LogTrace("ClosePublisherConnection");
 
@@ -706,12 +708,12 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         }
     }
 
-    private async Task ClosePublisherConnectionAsync()
+    private async Task ClosePublisherConnectionAsync(CancellationToken cancellationToken = default)
     {
         if (_publisherConnection is null)
             return;
 
-        using (await _lock.LockAsync().AnyContext())
+        using (await _lock.LockAsync(cancellationToken).AnyContext())
         {
             _logger.LogTrace("ClosePublisherConnectionAsync");
 
@@ -730,12 +732,12 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         }
     }
 
-    private void CloseSubscriberConnection()
+    private void CloseSubscriberConnection(CancellationToken cancellationToken = default)
     {
         if (_subscriberConnection is null)
             return;
 
-        using (_lock.Lock())
+        using (_lock.Lock(cancellationToken))
         {
             _logger.LogTrace("CloseSubscriberConnection");
 
@@ -760,12 +762,12 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         }
     }
 
-    private async Task CloseSubscriberConnectionAsync()
+    private async Task CloseSubscriberConnectionAsync(CancellationToken cancellationToken = default)
     {
         if (_subscriberConnection is null)
             return;
 
-        using (await _lock.LockAsync().AnyContext())
+        using (await _lock.LockAsync(cancellationToken).AnyContext())
         {
             _logger.LogTrace("CloseSubscriberConnectionAsync");
 
