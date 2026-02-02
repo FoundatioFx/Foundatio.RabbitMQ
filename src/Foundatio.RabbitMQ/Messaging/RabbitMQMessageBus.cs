@@ -26,6 +26,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private IConnection _subscriberConnection;
     private IChannel _publisherChannel;
     private IChannel _subscriberChannel;
+    private AsyncEventingBasicConsumer _consumer;
     private bool? _delayedExchangePluginEnabled;
     private readonly bool _isQuorumQueue;
     private bool _isDisposed;
@@ -159,11 +160,11 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
                 _logger.LogDebug("Using unlimited prefetch for acknowledgment strategy {AcknowledgementStrategy}", _options.AcknowledgementStrategy);
             }
 
-            var consumer = new AsyncEventingBasicConsumer(_subscriberChannel);
-            consumer.ReceivedAsync += OnMessageAsync;
-            consumer.ShutdownAsync += OnConsumerShutdownAsync;
+            _consumer = new AsyncEventingBasicConsumer(_subscriberChannel);
+            _consumer.ReceivedAsync += OnMessageAsync;
+            _consumer.ShutdownAsync += OnConsumerShutdownAsync;
 
-            await _subscriberChannel.BasicConsumeAsync(queueName, _options.AcknowledgementStrategy == AcknowledgementStrategy.FireAndForget, consumer, cancellationToken: cancellationToken).AnyContext();
+            await _subscriberChannel.BasicConsumeAsync(queueName, _options.AcknowledgementStrategy == AcknowledgementStrategy.FireAndForget, _consumer, cancellationToken: cancellationToken).AnyContext();
             _logger.LogTrace("The unique channel number for the subscriber is : {ChannelNumber}", _subscriberChannel.ChannelNumber);
         }
     }
@@ -799,6 +800,13 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         {
             _logger.LogTrace("CloseSubscriberConnection");
 
+            if (_consumer != null)
+            {
+                _consumer.ReceivedAsync -= OnMessageAsync;
+                _consumer.ShutdownAsync -= OnConsumerShutdownAsync;
+                _consumer = null;
+            }
+
             if (_subscriberChannel != null)
             {
                 _subscriberChannel.Dispose();
@@ -828,6 +836,13 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         using (await _lock.LockAsync().AnyContext())
         {
             _logger.LogTrace("CloseSubscriberConnectionAsync");
+
+            if (_consumer != null)
+            {
+                _consumer.ReceivedAsync -= OnMessageAsync;
+                _consumer.ShutdownAsync -= OnConsumerShutdownAsync;
+                _consumer = null;
+            }
 
             if (_subscriberChannel != null)
             {
