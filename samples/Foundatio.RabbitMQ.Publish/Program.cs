@@ -100,12 +100,12 @@ RootCommand rootCommand = new("RabbitMQ Order Publisher Sample")
 
 rootCommand.SetAction(parseResult =>
 {
-    string connectionString = parseResult.GetValue(connectionStringOption);
-    string hosts = parseResult.GetValue(hostsOption);
-    string topic = parseResult.GetValue(topicOption);
+    string? connectionString = parseResult.GetValue(connectionStringOption);
+    string? hosts = parseResult.GetValue(hostsOption);
+    string? topic = parseResult.GetValue(topicOption);
     bool durable = parseResult.GetValue(durableOption);
     bool delayed = parseResult.GetValue(delayedOption);
-    string acknowledgmentStrategy = parseResult.GetValue(acknowledgmentStrategyOption);
+    string? acknowledgmentStrategy = parseResult.GetValue(acknowledgmentStrategyOption);
     bool publisherConfirms = parseResult.GetValue(publisherConfirmsOption);
     int messageSize = parseResult.GetValue(messageSizeOption);
     ushort prefetchCount = parseResult.GetValue(prefetchCountOption);
@@ -115,7 +115,7 @@ rootCommand.SetAction(parseResult =>
     LogLevel logLevel = parseResult.GetValue(logLevelOption);
 
     return RunPublisher(
-        connectionString, hosts, topic, durable, delayed, acknowledgmentStrategy, publisherConfirms,
+        connectionString!, hosts ?? "", topic!, durable, delayed, acknowledgmentStrategy!, publisherConfirms,
         messageSize, prefetchCount, deliveryLimit, delaySeconds, interval, logLevel);
 });
 
@@ -235,7 +235,7 @@ static async Task RunPublisher(
         int orderCount = 0;
         do
         {
-            string input = Console.ReadLine();
+            string? input = Console.ReadLine();
             if (String.IsNullOrEmpty(input))
                 break;
 

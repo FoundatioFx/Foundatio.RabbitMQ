@@ -88,21 +88,21 @@ RootCommand rootCommand = new("RabbitMQ Order Subscriber Sample")
 
 rootCommand.SetAction(parseResult =>
 {
-    string connectionString = parseResult.GetValue(connectionStringOption);
-    string hosts = parseResult.GetValue(hostsOption);
-    string topic = parseResult.GetValue(topicOption);
+    string? connectionString = parseResult.GetValue(connectionStringOption);
+    string? hosts = parseResult.GetValue(hostsOption);
+    string? topic = parseResult.GetValue(topicOption);
     bool durable = parseResult.GetValue(durableOption);
     bool delayed = parseResult.GetValue(delayedOption);
-    string acknowledgmentStrategy = parseResult.GetValue(acknowledgmentStrategyOption);
+    string? acknowledgmentStrategy = parseResult.GetValue(acknowledgmentStrategyOption);
     ushort prefetchCount = parseResult.GetValue(prefetchCountOption);
     long deliveryLimit = parseResult.GetValue(deliveryLimitOption);
     int subscriberCount = parseResult.GetValue(subscriberCountOption);
-    string groupId = parseResult.GetValue(groupIdOption);
+    string? groupId = parseResult.GetValue(groupIdOption);
     LogLevel logLevel = parseResult.GetValue(logLevelOption);
 
     return RunSubscriberAsync(
-        connectionString, hosts, topic, durable, delayed, acknowledgmentStrategy,
-        prefetchCount, deliveryLimit, subscriberCount, groupId, logLevel);
+        connectionString!, hosts ?? "", topic!, durable, delayed, acknowledgmentStrategy!,
+        prefetchCount, deliveryLimit, subscriberCount, groupId!, logLevel);
 });
 
 return await rootCommand.Parse(args).InvokeAsync();

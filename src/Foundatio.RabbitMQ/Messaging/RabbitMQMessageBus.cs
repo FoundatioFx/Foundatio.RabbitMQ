@@ -22,16 +22,16 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private readonly AsyncLock _lock = new();
     private readonly ConnectionFactory _factory;
     private readonly List<AmqpTcpEndpoint> _endpoints;
-    private IConnection _publisherConnection;
-    private IConnection _subscriberConnection;
-    private IChannel _publisherChannel;
-    private IChannel _subscriberChannel;
-    private AsyncEventingBasicConsumer _consumer;
+    private IConnection? _publisherConnection;
+    private IConnection? _subscriberConnection;
+    private IChannel? _publisherChannel;
+    private IChannel? _subscriberChannel;
+    private AsyncEventingBasicConsumer? _consumer;
     private bool? _delayedExchangePluginEnabled;
     private readonly bool _isQuorumQueue;
     private bool _isDisposed;
     private volatile bool _isPublisherBlocked;
-    private volatile string _publisherBlockedReason;
+    private volatile string? _publisherBlockedReason;
 
     public RabbitMQMessageBus(RabbitMQMessageBusOptions options) : base(options)
     {
@@ -45,7 +45,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             !primaryUri.Scheme.Equals("amqps", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException($"ConnectionString must use amqp:// or amqps:// scheme: {options.ConnectionString}");
 
-        _isQuorumQueue = options.Arguments is not null && options.Arguments.TryGetValue("x-queue-type", out object queueType) && queueType is string type && String.Equals(type, "quorum", StringComparison.OrdinalIgnoreCase);
+        _isQuorumQueue = options.Arguments is not null && options.Arguments.TryGetValue("x-queue-type", out object? queueType) && queueType is string type && String.Equals(type, "quorum", StringComparison.OrdinalIgnoreCase);
 
         // Parse the connection string for credentials and vhost
         bool useSsl = primaryUri.Scheme.Equals("amqps", StringComparison.OrdinalIgnoreCase);
@@ -195,7 +195,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private async Task OnMessageAsync(object sender, BasicDeliverEventArgs envelope)
     {
         using var _ = _logger.BeginScope(s => s
-            .Property("MessageId", envelope.BasicProperties.MessageId)
+            .Property("MessageId", envelope.BasicProperties.MessageId ?? "(none)")
             .Property("DeliveryTag", envelope.DeliveryTag));
 
         _logger.LogTrace("OnMessageAsync({MessageId})", envelope.BasicProperties.MessageId);
@@ -203,8 +203,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         if (_subscribers.IsEmpty)
         {
             _logger.LogTrace("No subscribers ({MessageId})", envelope.BasicProperties.MessageId);
-            if (_options.AcknowledgementStrategy == AcknowledgementStrategy.Automatic)
-                await _subscriberChannel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
+            if (_options.AcknowledgementStrategy == AcknowledgementStrategy.Automatic && _subscriberChannel is { } rejectChannel)
+                await rejectChannel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
 
             return;
         }
@@ -214,12 +214,11 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             var message = ConvertToMessage(envelope);
             await SendMessageToSubscribersAsync(message).AnyContext();
 
-            if (_options.AcknowledgementStrategy == AcknowledgementStrategy.Automatic)
-                await _subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
+            if (_options.AcknowledgementStrategy == AcknowledgementStrategy.Automatic && _subscriberChannel is { } ackChannel)
+                await ackChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
         }
         catch (MessageBusException)
         {
-            // SendMessageToSubscribersAsync already logged the error
             if (_options.AcknowledgementStrategy == AcknowledgementStrategy.Automatic)
                 await HandleDeliveryLimitsAsync(envelope).AnyContext();
         }
@@ -233,12 +232,16 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     private async Task HandleDeliveryLimitsAsync(BasicDeliverEventArgs envelope)
     {
+        var channel = _subscriberChannel;
+        if (channel is null)
+            return;
+
         // Rule 1: If the limit is negative, reject regardless of queue type
         if (_options.DeliveryLimit < 0)
         {
             _logger.LogDebug("Message ({MessageId}) rejected due to negative delivery limit ({DeliveryLimit})",
                 envelope.BasicProperties.MessageId, _options.DeliveryLimit);
-            await _subscriberChannel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
+            await channel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
             return;
         }
 
@@ -259,14 +262,14 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
                     _logger.LogWarning(
                         "Quorum queue message ({MessageId}) delivery count ({DeliveryCount}) is over configured limit ({DeliveryLimit})",
                         envelope.BasicProperties.MessageId, retryCount, _options.DeliveryLimit);
-                    await _subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
+                    await channel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
                 }
                 else
                 {
                     _logger.LogDebug(
                         "Quorum queue message ({MessageId}) has exceeded delivery limit ({DeliveryLimit}): Rejecting to let broker handle",
                         envelope.BasicProperties.MessageId, _options.DeliveryLimit);
-                    await _subscriberChannel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
+                    await channel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
                 }
             }
             else
@@ -274,7 +277,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
                 _logger.LogDebug(
                     "Classic queue message ({MessageId}) has reached the delivery limit of {DeliveryLimit}: Acknowledging message",
                     envelope.BasicProperties.MessageId, _options.DeliveryLimit);
-                await _subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
+                await channel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
             }
 
             return;
@@ -286,7 +289,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             _logger.LogDebug(
                 "Quorum queue message ({MessageId}) under delivery limit: Rejecting for broker-managed redelivery",
                 envelope.BasicProperties.MessageId);
-            await _subscriberChannel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
+            await channel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
         }
         else
         {
@@ -302,7 +305,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             MessageId = Guid.NewGuid().ToString("N")
         };
 
-        var headers = new Dictionary<string, object>(envelope.BasicProperties.Headers ?? new Dictionary<string, object>())
+        var headers = new Dictionary<string, object?>(envelope.BasicProperties.Headers ?? new Dictionary<string, object?>())
         {
             [XDeliveryCountHeader] = currentRetryCount + 1,
             [XOriginalMessageIdHeader] = originalMessageId
@@ -317,7 +320,9 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         {
             await EnsureTopicCreatedAsync(envelope.CancellationToken).AnyContext();
             await PublishMessageAsync(envelope.Exchange, envelope.RoutingKey, envelope.Body.ToArray(), properties, envelope.CancellationToken).AnyContext();
-            await _subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
+
+            if (_subscriberChannel is { } ackChannel)
+                await ackChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
 
             _logger.LogDebug("Republished classic queue message ({MessageId}) (OriginalMessageId={OriginalMessageId}) with delivery count {DeliveryCount}",
                 envelope.BasicProperties.MessageId, originalMessageId, currentRetryCount + 1);
@@ -325,7 +330,9 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to republish message ({MessageId}), acknowledging to prevent infinite retry", envelope.BasicProperties.MessageId);
-            await _subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
+
+            if (_subscriberChannel is { } fallbackChannel)
+                await fallbackChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
         }
     }
 
@@ -336,9 +343,9 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private static long GetRetryCountFromHeader(BasicDeliverEventArgs envelope)
     {
         long retryCount = 0;
-        if (envelope.BasicProperties.Headers?.TryGetValue(XDeliveryCountHeader, out object xDeliveryCount) is true)
+        if (envelope.BasicProperties.Headers?.TryGetValue(XDeliveryCountHeader, out object? xDeliveryCount) is true)
         {
-            if (!Int64.TryParse(xDeliveryCount.ToString(), out retryCount))
+            if (!Int64.TryParse(xDeliveryCount?.ToString(), out retryCount))
                 retryCount = 0;
         }
 
@@ -347,17 +354,17 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     private static string GetOriginalMessageIdFromHeader(BasicDeliverEventArgs envelope)
     {
-        if (envelope.BasicProperties.Headers?.TryGetValue(XOriginalMessageIdHeader, out object xOriginalMessageId) is true)
+        if (envelope.BasicProperties.Headers?.TryGetValue(XOriginalMessageIdHeader, out object? xOriginalMessageId) is true)
         {
             return xOriginalMessageId switch
             {
                 string str => str,
                 byte[] bytes => Encoding.UTF8.GetString(bytes),
-                _ => xOriginalMessageId?.ToString()
+                _ => xOriginalMessageId?.ToString() ?? envelope.BasicProperties.MessageId ?? string.Empty
             };
         }
 
-        return envelope.BasicProperties.MessageId;
+        return envelope.BasicProperties.MessageId ?? string.Empty;
     }
 
     private async Task PublishMessageAsync(string exchange, string routingKey, byte[] body, BasicProperties properties, CancellationToken cancellationToken)
@@ -371,28 +378,31 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
                 if (_isPublisherBlocked)
                     throw new MessageBusException($"Cannot publish: publisher connection is blocked by broker ({_publisherBlockedReason ?? "resource alarm"})");
 
-                await _publisherChannel.BasicPublishAsync(exchange, routingKey, mandatory: false, properties, body, cancellationToken: cancellationToken);
+                await _publisherChannel!.BasicPublishAsync(exchange, routingKey, mandatory: false, properties, body, cancellationToken: cancellationToken);
             }, cancellationToken).AnyContext();
         }
     }
 
     protected virtual IMessage ConvertToMessage(BasicDeliverEventArgs envelope)
     {
+        var messageType = envelope.BasicProperties.Type;
         var message = new Message(envelope.Body.ToArray(), DeserializeMessageBody)
         {
-            Type = envelope.BasicProperties.Type,
-            ClrType = GetMappedMessageType(envelope.BasicProperties.Type),
+            Type = messageType ?? string.Empty,
             CorrelationId = envelope.BasicProperties.CorrelationId,
             UniqueId = envelope.BasicProperties.MessageId
         };
+
+        if (messageType is not null)
+            message.ClrType = GetMappedMessageType(messageType);
 
         if (envelope.BasicProperties.Headers is not null)
             foreach (var header in envelope.BasicProperties.Headers)
             {
                 if (header.Value is byte[] byteData)
                     message.Properties[header.Key] = Encoding.UTF8.GetString(byteData);
-                else
-                    message.Properties[header.Key] = header.Value.ToString();
+                else if (header.Value?.ToString() is { } stringValue)
+                    message.Properties[header.Key] = stringValue;
             }
 
         return message;
@@ -540,6 +550,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         {
             var mappedType = GetMappedMessageType(messageType);
             _logger.LogTrace("Schedule delayed message: {MessageType} ({Delay}ms)", messageType, options.DeliveryDelay.Value.TotalMilliseconds);
+            if (mappedType is null)
+                throw new MessageBusException($"Unable to resolve CLR type for delayed message: {messageType}");
 
             SendDelayedMessage(mappedType, message, options);
             return;
@@ -559,7 +571,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
         if (options.Properties.Count > 0)
         {
-            basicProperties.Headers ??= new Dictionary<string, object>();
+            basicProperties.Headers ??= new Dictionary<string, object?>();
             foreach (var property in options.Properties)
                 basicProperties.Headers.Add(property.Key, property.Value);
         }
@@ -570,7 +582,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             // It's necessary to typecast long to int because RabbitMQ on the consumer side is reading the
             // data back as signed (using BinaryReader#ReadInt64). You will see the value to be negative
             // and the data will be delivered immediately.
-            basicProperties.Headers ??= new Dictionary<string, object>();
+            basicProperties.Headers ??= new Dictionary<string, object?>();
             basicProperties.Headers["x-delay"] = Convert.ToInt32(options.DeliveryDelay.Value.TotalMilliseconds);
             _logger.LogTrace("Schedule delayed message: {MessageType} ({Delay}ms)", messageType, options.DeliveryDelay.Value.TotalMilliseconds);
         }
@@ -609,7 +621,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             // This exchange is a delayed exchange (fanout). You need rabbitmq_delayed_message_exchange plugin to RabbitMQ
             // Disclaimer: https://github.com/rabbitmq/rabbitmq-delayed-message-exchange/
             // Please read the *Performance Impact* of the delayed exchange type.
-            var args = new Dictionary<string, object> { { "x-delayed-type", ExchangeType.Fanout } };
+            var args = new Dictionary<string, object?> { { "x-delayed-type", ExchangeType.Fanout } };
             await channel.ExchangeDeclareAsync(_options.Topic, "x-delayed-message", _options.IsDurable, false, args).AnyContext();
         }
         catch (OperationInterruptedException ex)
@@ -793,7 +805,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     /// <summary>
     /// Parses a host string in format "hostname" or "hostname:port" into an AmqpTcpEndpoint.
     /// </summary>
-    private static AmqpTcpEndpoint ParseHostEndpoint(string host, int defaultPort)
+    private static AmqpTcpEndpoint? ParseHostEndpoint(string host, int defaultPort)
     {
         if (String.IsNullOrWhiteSpace(host))
             return null;
@@ -811,57 +823,57 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     private void RegisterPublisherConnectionEventHandlers()
     {
-        _publisherConnection.CallbackExceptionAsync += OnPublisherConnectionOnCallbackExceptionAsync;
-        _publisherConnection.ConnectionBlockedAsync += OnPublisherConnectionOnConnectionBlockedAsync;
-        _publisherConnection.ConnectionRecoveryErrorAsync += OnPublisherConnectionOnConnectionRecoveryErrorAsync;
-        _publisherConnection.ConnectionShutdownAsync += OnPublisherConnectionOnConnectionShutdownAsync;
-        _publisherConnection.ConnectionUnblockedAsync += OnPublisherConnectionOnConnectionUnblockedAsync;
-        _publisherConnection.RecoveringConsumerAsync += OnPublisherConnectionOnRecoveringConsumerAsync;
-        _publisherConnection.RecoverySucceededAsync += OnPublisherConnectionOnRecoverySucceededAsync;
+        _publisherConnection!.CallbackExceptionAsync += OnPublisherConnectionOnCallbackExceptionAsync;
+        _publisherConnection!.ConnectionBlockedAsync += OnPublisherConnectionOnConnectionBlockedAsync;
+        _publisherConnection!.ConnectionRecoveryErrorAsync += OnPublisherConnectionOnConnectionRecoveryErrorAsync;
+        _publisherConnection!.ConnectionShutdownAsync += OnPublisherConnectionOnConnectionShutdownAsync;
+        _publisherConnection!.ConnectionUnblockedAsync += OnPublisherConnectionOnConnectionUnblockedAsync;
+        _publisherConnection!.RecoveringConsumerAsync += OnPublisherConnectionOnRecoveringConsumerAsync;
+        _publisherConnection!.RecoverySucceededAsync += OnPublisherConnectionOnRecoverySucceededAsync;
     }
 
     private void UnregisterPublisherConnectionEventHandlers()
     {
-        _publisherConnection.CallbackExceptionAsync -= OnPublisherConnectionOnCallbackExceptionAsync;
-        _publisherConnection.ConnectionBlockedAsync -= OnPublisherConnectionOnConnectionBlockedAsync;
-        _publisherConnection.ConnectionRecoveryErrorAsync -= OnPublisherConnectionOnConnectionRecoveryErrorAsync;
-        _publisherConnection.ConnectionShutdownAsync -= OnPublisherConnectionOnConnectionShutdownAsync;
-        _publisherConnection.ConnectionUnblockedAsync -= OnPublisherConnectionOnConnectionUnblockedAsync;
-        _publisherConnection.RecoveringConsumerAsync -= OnPublisherConnectionOnRecoveringConsumerAsync;
-        _publisherConnection.RecoverySucceededAsync -= OnPublisherConnectionOnRecoverySucceededAsync;
+        _publisherConnection!.CallbackExceptionAsync -= OnPublisherConnectionOnCallbackExceptionAsync;
+        _publisherConnection!.ConnectionBlockedAsync -= OnPublisherConnectionOnConnectionBlockedAsync;
+        _publisherConnection!.ConnectionRecoveryErrorAsync -= OnPublisherConnectionOnConnectionRecoveryErrorAsync;
+        _publisherConnection!.ConnectionShutdownAsync -= OnPublisherConnectionOnConnectionShutdownAsync;
+        _publisherConnection!.ConnectionUnblockedAsync -= OnPublisherConnectionOnConnectionUnblockedAsync;
+        _publisherConnection!.RecoveringConsumerAsync -= OnPublisherConnectionOnRecoveringConsumerAsync;
+        _publisherConnection!.RecoverySucceededAsync -= OnPublisherConnectionOnRecoverySucceededAsync;
     }
 
     private void RegisterSubscriberConnectionEventHandlers()
     {
-        _subscriberConnection.CallbackExceptionAsync += OnSubscriberConnectionOnCallbackExceptionAsync;
-        _subscriberConnection.ConnectionBlockedAsync += OnSubscriberConnectionOnConnectionBlockedAsync;
-        _subscriberConnection.ConnectionRecoveryErrorAsync += OnSubscriberConnectionOnConnectionRecoveryErrorAsync;
-        _subscriberConnection.ConnectionShutdownAsync += OnSubscriberConnectionOnConnectionShutdownAsync;
-        _subscriberConnection.ConnectionUnblockedAsync += OnSubscriberConnectionOnConnectionUnblockedAsync;
-        _subscriberConnection.RecoveringConsumerAsync += OnSubscriberConnectionOnRecoveringConsumerAsync;
-        _subscriberConnection.RecoverySucceededAsync += OnSubscriberConnectionOnRecoverySucceededAsync;
+        _subscriberConnection!.CallbackExceptionAsync += OnSubscriberConnectionOnCallbackExceptionAsync;
+        _subscriberConnection!.ConnectionBlockedAsync += OnSubscriberConnectionOnConnectionBlockedAsync;
+        _subscriberConnection!.ConnectionRecoveryErrorAsync += OnSubscriberConnectionOnConnectionRecoveryErrorAsync;
+        _subscriberConnection!.ConnectionShutdownAsync += OnSubscriberConnectionOnConnectionShutdownAsync;
+        _subscriberConnection!.ConnectionUnblockedAsync += OnSubscriberConnectionOnConnectionUnblockedAsync;
+        _subscriberConnection!.RecoveringConsumerAsync += OnSubscriberConnectionOnRecoveringConsumerAsync;
+        _subscriberConnection!.RecoverySucceededAsync += OnSubscriberConnectionOnRecoverySucceededAsync;
     }
 
     private void UnregisterSubscriberConnectionEventHandlers()
     {
-        _subscriberConnection.CallbackExceptionAsync -= OnSubscriberConnectionOnCallbackExceptionAsync;
-        _subscriberConnection.ConnectionBlockedAsync -= OnSubscriberConnectionOnConnectionBlockedAsync;
-        _subscriberConnection.ConnectionRecoveryErrorAsync -= OnSubscriberConnectionOnConnectionRecoveryErrorAsync;
-        _subscriberConnection.ConnectionShutdownAsync -= OnSubscriberConnectionOnConnectionShutdownAsync;
-        _subscriberConnection.ConnectionUnblockedAsync -= OnSubscriberConnectionOnConnectionUnblockedAsync;
-        _subscriberConnection.RecoveringConsumerAsync -= OnSubscriberConnectionOnRecoveringConsumerAsync;
-        _subscriberConnection.RecoverySucceededAsync -= OnSubscriberConnectionOnRecoverySucceededAsync;
+        _subscriberConnection!.CallbackExceptionAsync -= OnSubscriberConnectionOnCallbackExceptionAsync;
+        _subscriberConnection!.ConnectionBlockedAsync -= OnSubscriberConnectionOnConnectionBlockedAsync;
+        _subscriberConnection!.ConnectionRecoveryErrorAsync -= OnSubscriberConnectionOnConnectionRecoveryErrorAsync;
+        _subscriberConnection!.ConnectionShutdownAsync -= OnSubscriberConnectionOnConnectionShutdownAsync;
+        _subscriberConnection!.ConnectionUnblockedAsync -= OnSubscriberConnectionOnConnectionUnblockedAsync;
+        _subscriberConnection!.RecoveringConsumerAsync -= OnSubscriberConnectionOnRecoveringConsumerAsync;
+        _subscriberConnection!.RecoverySucceededAsync -= OnSubscriberConnectionOnRecoverySucceededAsync;
     }
 
     private void RegisterConsumerEventHandlers()
     {
-        _consumer.ReceivedAsync += OnMessageAsync;
-        _consumer.ShutdownAsync += OnConsumerShutdownAsync;
+        _consumer!.ReceivedAsync += OnMessageAsync;
+        _consumer!.ShutdownAsync += OnConsumerShutdownAsync;
     }
 
     private void UnregisterConsumerEventHandlers()
     {
-        _consumer.ReceivedAsync -= OnMessageAsync;
-        _consumer.ShutdownAsync -= OnConsumerShutdownAsync;
+        _consumer!.ReceivedAsync -= OnMessageAsync;
+        _consumer!.ShutdownAsync -= OnConsumerShutdownAsync;
     }
 }
