@@ -379,9 +379,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     private async Task PublishMessageAsync(string exchange, string routingKey, byte[] body, BasicProperties properties, CancellationToken cancellationToken)
     {
-        if (_publisherChannel is null)
-            throw new MessageBusException("Publisher channel must be initialized before publishing messages.");
-
         using (await _lock.LockAsync(cancellationToken).AnyContext())
         {
             var channel = _publisherChannel;
