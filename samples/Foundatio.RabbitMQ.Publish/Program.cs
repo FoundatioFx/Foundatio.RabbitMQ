@@ -136,7 +136,7 @@ static async Task RunPublisher(
     int interval,
     LogLevel logLevel)
 {
-    ArgumentException.ThrowIfNullOrEmpty(connectionString);
+    ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
     ArgumentException.ThrowIfNullOrEmpty(topic);
 
     using var loggerFactory = LoggerFactory.Create(builder =>

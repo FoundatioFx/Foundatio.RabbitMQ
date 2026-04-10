@@ -120,7 +120,7 @@ static async Task RunSubscriberAsync(
     string? groupId,
     LogLevel logLevel)
 {
-    ArgumentException.ThrowIfNullOrEmpty(connectionString);
+    ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
     ArgumentException.ThrowIfNullOrEmpty(topic);
     ArgumentException.ThrowIfNullOrEmpty(groupId);
 

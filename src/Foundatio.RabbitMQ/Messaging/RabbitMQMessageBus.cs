@@ -381,18 +381,20 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private async Task PublishMessageAsync(string exchange, string routingKey, byte[] body, BasicProperties properties, CancellationToken cancellationToken)
     {
         if (_publisherChannel is null)
-            throw new InvalidOperationException("Publisher channel must be initialized before publishing messages.");
+            throw new MessageBusException("Publisher channel must be initialized before publishing messages.");
 
         using (await _lock.LockAsync(cancellationToken).AnyContext())
         {
+            var channel = _publisherChannel;
+            if (channel is null)
+                throw new MessageBusException("Cannot publish: publisher channel was closed.");
+
             await _resiliencePolicy.ExecuteAsync(async _ =>
             {
-                // Check blocked state inside resilience policy - re-evaluated on each retry
-                // MessageBusException is excluded from retries in the base class policy
                 if (_isPublisherBlocked)
                     throw new MessageBusException($"Cannot publish: publisher connection is blocked by broker ({_publisherBlockedReason ?? "resource alarm"})");
 
-                await _publisherChannel.BasicPublishAsync(exchange, routingKey, mandatory: false, properties, body, cancellationToken: cancellationToken);
+                await channel.BasicPublishAsync(exchange, routingKey, mandatory: false, properties, body, cancellationToken: cancellationToken);
             }, cancellationToken).AnyContext();
         }
     }
