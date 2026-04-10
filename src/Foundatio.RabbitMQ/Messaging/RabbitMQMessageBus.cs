@@ -195,7 +195,10 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private async Task OnMessageAsync(object sender, BasicDeliverEventArgs envelope)
     {
         if (_subscriberChannel is not { } subscriberChannel)
-            throw new InvalidOperationException("Subscriber channel is not initialized.");
+        {
+            _logger.LogWarning("Subscriber channel is not available, skipping {Operation} for message ({MessageId})", nameof(OnMessageAsync), envelope.BasicProperties.MessageId);
+            return;
+        }
 
         using var _ = _logger.BeginScope(s => s
             .Property("MessageId", envelope.BasicProperties.MessageId)
@@ -236,7 +239,10 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private async Task HandleDeliveryLimitsAsync(BasicDeliverEventArgs envelope)
     {
         if (_subscriberChannel is not { } subscriberChannel)
-            throw new InvalidOperationException("Subscriber channel is not initialized.");
+        {
+            _logger.LogWarning("Subscriber channel is not available, skipping {Operation} for message ({MessageId})", nameof(HandleDeliveryLimitsAsync), envelope.BasicProperties.MessageId);
+            return;
+        }
 
         // Rule 1: If the limit is negative, reject regardless of queue type
         if (_options.DeliveryLimit < 0)
@@ -302,7 +308,10 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private async Task RepublishMessageWithIncrementedDeliveryCountAsync(BasicDeliverEventArgs envelope, long currentRetryCount)
     {
         if (_subscriberChannel is not { } subscriberChannel)
-            throw new InvalidOperationException("Subscriber channel is not initialized.");
+        {
+            _logger.LogWarning("Subscriber channel is not available, skipping {Operation} for message ({MessageId}); leaving unacknowledged for broker redelivery", nameof(RepublishMessageWithIncrementedDeliveryCountAsync), envelope.BasicProperties.MessageId);
+            return;
+        }
 
         string originalMessageId = GetOriginalMessageIdFromHeader(envelope);
         var properties = new BasicProperties(envelope.BasicProperties)
