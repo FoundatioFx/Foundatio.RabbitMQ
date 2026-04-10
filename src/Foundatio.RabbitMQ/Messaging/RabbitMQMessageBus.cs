@@ -224,6 +224,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         }
         catch (MessageBusException)
         {
+            // SendMessageToSubscribersAsync already logged the error
             if (_options.AcknowledgementStrategy == AcknowledgementStrategy.Automatic)
                 await HandleDeliveryLimitsAsync(envelope).AnyContext();
         }
@@ -387,6 +388,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
             await _resiliencePolicy.ExecuteAsync(async _ =>
             {
+                // Check blocked state inside resilience policy - re-evaluated on each retry
+                // MessageBusException is excluded from retries in the base class policy
                 if (_isPublisherBlocked)
                     throw new MessageBusException($"Cannot publish: publisher connection is blocked by broker ({_publisherBlockedReason ?? "resource alarm"})");
 
