@@ -35,8 +35,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     public RabbitMQMessageBus(RabbitMQMessageBusOptions options) : base(options)
     {
-        if (String.IsNullOrEmpty(options.ConnectionString))
-            throw new ArgumentException("ConnectionString is required.");
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.ConnectionString, nameof(options.ConnectionString));
 
         if (!Uri.TryCreate(options.ConnectionString, UriKind.Absolute, out var primaryUri))
             throw new ArgumentException($"ConnectionString is not a valid URI: {options.ConnectionString}");
@@ -682,8 +681,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
         _isDisposed = true;
 
-        if (_factory is not null)
-            _factory.AutomaticRecoveryEnabled = false;
+        _factory.AutomaticRecoveryEnabled = false;
 
         ClosePublisherConnection();
         CloseSubscriberConnection();
@@ -699,8 +697,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
         _isDisposed = true;
 
-        if (_factory is not null)
-            _factory.AutomaticRecoveryEnabled = false;
+        _factory.AutomaticRecoveryEnabled = false;
 
         await ClosePublisherConnectionAsync().AnyContext();
         await CloseSubscriberConnectionAsync().AnyContext();

@@ -121,8 +121,8 @@ static async Task RunSubscriberAsync(
     LogLevel logLevel)
 {
     ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
-    ArgumentException.ThrowIfNullOrEmpty(topic);
-    ArgumentException.ThrowIfNullOrEmpty(groupId);
+    ArgumentException.ThrowIfNullOrWhiteSpace(topic);
+    ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
 
     using ILoggerFactory loggerFactory = LoggerFactory.Create(builder =>
     {
