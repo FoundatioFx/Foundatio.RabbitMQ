@@ -35,7 +35,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     public RabbitMQMessageBus(RabbitMQMessageBusOptions options) : base(options)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(options.ConnectionString, nameof(options.ConnectionString));
+        ArgumentException.ThrowIfNullOrWhiteSpace(options?.ConnectionString, nameof(options.ConnectionString));
 
         if (!Uri.TryCreate(options.ConnectionString, UriKind.Absolute, out var primaryUri))
             throw new ArgumentException($"ConnectionString is not a valid URI: {options.ConnectionString}");
@@ -194,10 +194,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private async Task OnMessageAsync(object sender, BasicDeliverEventArgs envelope)
     {
         if (_subscriberChannel is not { } subscriberChannel)
-        {
-            _logger.LogWarning("Subscriber channel is not available, skipping {Operation} for message ({MessageId})", nameof(OnMessageAsync), envelope.BasicProperties.MessageId);
-            return;
-        }
+            throw new MessageBusException("Subscriber channel is not available. Cannot process message.");
 
         using var _ = _logger.BeginScope(s => s
             .Property("MessageId", envelope.BasicProperties.MessageId)
@@ -239,10 +236,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private async Task HandleDeliveryLimitsAsync(BasicDeliverEventArgs envelope)
     {
         if (_subscriberChannel is not { } subscriberChannel)
-        {
-            _logger.LogWarning("Subscriber channel is not available, skipping {Operation} for message ({MessageId})", nameof(HandleDeliveryLimitsAsync), envelope.BasicProperties.MessageId);
-            return;
-        }
+            throw new MessageBusException("Subscriber channel is not available. Cannot handle delivery limits.");
 
         // Rule 1: If the limit is negative, reject regardless of queue type
         if (_options.DeliveryLimit < 0)
@@ -308,12 +302,9 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private async Task RepublishMessageWithIncrementedDeliveryCountAsync(BasicDeliverEventArgs envelope, long currentRetryCount)
     {
         if (_subscriberChannel is not { } subscriberChannel)
-        {
-            _logger.LogWarning("Subscriber channel is not available, skipping {Operation} for message ({MessageId}); leaving unacknowledged for broker redelivery", nameof(RepublishMessageWithIncrementedDeliveryCountAsync), envelope.BasicProperties.MessageId);
-            return;
-        }
+            throw new MessageBusException("Subscriber channel is not available. Cannot republish message.");
 
-        string originalMessageId = GetOriginalMessageIdFromHeader(envelope);
+        string? originalMessageId = GetOriginalMessageIdFromHeader(envelope);
         var properties = new BasicProperties(envelope.BasicProperties)
         {
             MessageId = Guid.NewGuid().ToString("N")
@@ -362,7 +353,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         return retryCount;
     }
 
-    private static string GetOriginalMessageIdFromHeader(BasicDeliverEventArgs envelope)
+    private static string? GetOriginalMessageIdFromHeader(BasicDeliverEventArgs envelope)
     {
         if (envelope.BasicProperties.Headers?.TryGetValue(XOriginalMessageIdHeader, out object? xOriginalMessageId) is true)
         {
@@ -370,26 +361,23 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             {
                 string str => str,
                 byte[] bytes => Encoding.UTF8.GetString(bytes),
-                null => envelope.BasicProperties.MessageId ?? String.Empty,
-                _ => xOriginalMessageId.ToString() ?? envelope.BasicProperties.MessageId ?? String.Empty
+                null => envelope.BasicProperties.MessageId,
+                _ => xOriginalMessageId.ToString() ?? envelope.BasicProperties.MessageId
             };
         }
 
-        return envelope.BasicProperties.MessageId ?? String.Empty;
+        return envelope.BasicProperties.MessageId;
     }
 
     private async Task PublishMessageAsync(string exchange, string routingKey, byte[] body, BasicProperties properties, CancellationToken cancellationToken)
     {
         using (await _lock.LockAsync(cancellationToken).AnyContext())
         {
-            var channel = _publisherChannel;
-            if (channel is null)
+            if (_publisherChannel is not { } channel)
                 throw new MessageBusException("Cannot publish: publisher channel was closed.");
 
             await _resiliencePolicy.ExecuteAsync(async _ =>
             {
-                // Check blocked state inside resilience policy - re-evaluated on each retry
-                // MessageBusException is excluded from retries in the base class policy
                 if (_isPublisherBlocked)
                     throw new MessageBusException($"Cannot publish: publisher connection is blocked by broker ({_publisherBlockedReason ?? "resource alarm"})");
 
@@ -413,8 +401,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             {
                 if (header.Value is byte[] byteData)
                     message.Properties[header.Key] = Encoding.UTF8.GetString(byteData);
-                else
-                    message.Properties[header.Key] = header.Value?.ToString() ?? String.Empty;
+                else if (header.Value?.ToString() is { } stringValue)
+                    message.Properties[header.Key] = stringValue;
             }
 
         return message;
@@ -560,8 +548,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         // if the RabbitMQ plugin is not available, then use the base class delay mechanism
         if (_delayedExchangePluginEnabled is false && options.DeliveryDelay.HasValue && options.DeliveryDelay.Value > TimeSpan.Zero)
         {
-            var mappedType = GetMappedMessageType(messageType);
             _logger.LogTrace("Schedule delayed message: {MessageType} ({Delay}ms)", messageType, options.DeliveryDelay.Value.TotalMilliseconds);
+            var mappedType = GetMappedMessageType(messageType);
             if (mappedType is null)
                 throw new MessageBusException($"Unable to resolve CLR type for delayed message: {messageType}");
 
@@ -834,7 +822,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private void RegisterPublisherConnectionEventHandlers()
     {
         if (_publisherConnection is null)
-            throw new InvalidOperationException("Publisher connection must be initialized before registering event handlers.");
+            throw new MessageBusException("Publisher connection must be initialized before registering event handlers.");
 
         _publisherConnection.CallbackExceptionAsync += OnPublisherConnectionOnCallbackExceptionAsync;
         _publisherConnection.ConnectionBlockedAsync += OnPublisherConnectionOnConnectionBlockedAsync;
@@ -848,7 +836,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private void UnregisterPublisherConnectionEventHandlers()
     {
         if (_publisherConnection is null)
-            throw new InvalidOperationException("Publisher connection must be initialized before unregistering event handlers.");
+            throw new MessageBusException("Publisher connection must be initialized before unregistering event handlers.");
 
         _publisherConnection.CallbackExceptionAsync -= OnPublisherConnectionOnCallbackExceptionAsync;
         _publisherConnection.ConnectionBlockedAsync -= OnPublisherConnectionOnConnectionBlockedAsync;
@@ -862,7 +850,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private void RegisterSubscriberConnectionEventHandlers()
     {
         if (_subscriberConnection is null)
-            throw new InvalidOperationException("Subscriber connection must be initialized before registering event handlers.");
+            throw new MessageBusException("Subscriber connection must be initialized before registering event handlers.");
 
         _subscriberConnection.CallbackExceptionAsync += OnSubscriberConnectionOnCallbackExceptionAsync;
         _subscriberConnection.ConnectionBlockedAsync += OnSubscriberConnectionOnConnectionBlockedAsync;
@@ -876,7 +864,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private void UnregisterSubscriberConnectionEventHandlers()
     {
         if (_subscriberConnection is null)
-            throw new InvalidOperationException("Subscriber connection must be initialized before unregistering event handlers.");
+            throw new MessageBusException("Subscriber connection must be initialized before unregistering event handlers.");
 
         _subscriberConnection.CallbackExceptionAsync -= OnSubscriberConnectionOnCallbackExceptionAsync;
         _subscriberConnection.ConnectionBlockedAsync -= OnSubscriberConnectionOnConnectionBlockedAsync;
@@ -890,7 +878,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private void RegisterConsumerEventHandlers()
     {
         if (_consumer is null)
-            throw new InvalidOperationException("Consumer must be initialized before registering event handlers.");
+            throw new MessageBusException("Consumer must be initialized before registering event handlers.");
 
         _consumer.ReceivedAsync += OnMessageAsync;
         _consumer.ShutdownAsync += OnConsumerShutdownAsync;
@@ -899,7 +887,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private void UnregisterConsumerEventHandlers()
     {
         if (_consumer is null)
-            throw new InvalidOperationException("Consumer must be initialized before unregistering event handlers.");
+            throw new MessageBusException("Consumer must be initialized before unregistering event handlers.");
 
         _consumer.ReceivedAsync -= OnMessageAsync;
         _consumer.ShutdownAsync -= OnConsumerShutdownAsync;
