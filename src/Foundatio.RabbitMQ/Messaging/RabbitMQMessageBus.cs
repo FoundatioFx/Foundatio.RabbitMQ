@@ -360,7 +360,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             {
                 string str => str,
                 byte[] bytes => Encoding.UTF8.GetString(bytes),
-                _ => xOriginalMessageId?.ToString() ?? envelope.BasicProperties.MessageId ?? string.Empty
+                null => envelope.BasicProperties.MessageId ?? string.Empty,
+                _ => xOriginalMessageId.ToString() ?? envelope.BasicProperties.MessageId ?? string.Empty
             };
         }
 
@@ -386,6 +387,9 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     protected virtual IMessage ConvertToMessage(BasicDeliverEventArgs envelope)
     {
         var messageType = envelope.BasicProperties.Type;
+        if (String.IsNullOrEmpty(messageType))
+            _logger.LogTrace("Received message without a Type header ({MessageId})", envelope.BasicProperties.MessageId);
+
         var message = new Message(envelope.Body.ToArray(), DeserializeMessageBody)
         {
             Type = messageType ?? string.Empty,
