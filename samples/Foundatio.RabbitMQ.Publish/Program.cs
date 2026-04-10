@@ -115,19 +115,19 @@ rootCommand.SetAction(parseResult =>
     LogLevel logLevel = parseResult.GetValue(logLevelOption);
 
     return RunPublisher(
-        connectionString!, hosts ?? "", topic!, durable, delayed, acknowledgmentStrategy!, publisherConfirms,
+        connectionString, hosts, topic, durable, delayed, acknowledgmentStrategy, publisherConfirms,
         messageSize, prefetchCount, deliveryLimit, delaySeconds, interval, logLevel);
 });
 
 return await rootCommand.Parse(args).InvokeAsync();
 
 static async Task RunPublisher(
-    string connectionString,
-    string hosts,
-    string topic,
+    string? connectionString,
+    string? hosts,
+    string? topic,
     bool durable,
     bool delayed,
-    string acknowledgmentStrategy,
+    string? acknowledgmentStrategy,
     bool publisherConfirms,
     int messageSize,
     ushort prefetchCount,
@@ -136,6 +136,9 @@ static async Task RunPublisher(
     int interval,
     LogLevel logLevel)
 {
+    ArgumentException.ThrowIfNullOrEmpty(connectionString);
+    ArgumentException.ThrowIfNullOrEmpty(topic);
+
     using var loggerFactory = LoggerFactory.Create(builder =>
     {
         builder.AddConsole().SetMinimumLevel(logLevel);

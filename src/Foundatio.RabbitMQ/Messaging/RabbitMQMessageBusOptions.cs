@@ -9,7 +9,7 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     /// The connection string. See https://www.rabbitmq.com/uri-spec.html for more information.
     /// Provides credentials and vhost. When Hosts is specified, the host in the connection string is ignored.
     /// </summary>
-    public string ConnectionString { get; set; } = null!;
+    public string? ConnectionString { get; set; }
 
     /// <summary>
     /// List of hosts for failover. When specified, the client will try each host in order until one succeeds.

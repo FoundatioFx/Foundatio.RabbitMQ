@@ -101,25 +101,29 @@ rootCommand.SetAction(parseResult =>
     LogLevel logLevel = parseResult.GetValue(logLevelOption);
 
     return RunSubscriberAsync(
-        connectionString!, hosts ?? "", topic!, durable, delayed, acknowledgmentStrategy!,
-        prefetchCount, deliveryLimit, subscriberCount, groupId!, logLevel);
+        connectionString, hosts, topic, durable, delayed, acknowledgmentStrategy,
+        prefetchCount, deliveryLimit, subscriberCount, groupId, logLevel);
 });
 
 return await rootCommand.Parse(args).InvokeAsync();
 
 static async Task RunSubscriberAsync(
-    string connectionString,
-    string hosts,
-    string topic,
+    string? connectionString,
+    string? hosts,
+    string? topic,
     bool durable,
     bool delayed,
-    string acknowledgmentStrategy,
+    string? acknowledgmentStrategy,
     ushort prefetchCount,
     long deliveryLimit,
     int subscriberCount,
-    string groupId,
+    string? groupId,
     LogLevel logLevel)
 {
+    ArgumentException.ThrowIfNullOrEmpty(connectionString);
+    ArgumentException.ThrowIfNullOrEmpty(topic);
+    ArgumentException.ThrowIfNullOrEmpty(groupId);
+
     using ILoggerFactory loggerFactory = LoggerFactory.Create(builder =>
     {
         builder.AddConsole().SetMinimumLevel(logLevel);

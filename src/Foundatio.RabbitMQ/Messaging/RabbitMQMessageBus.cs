@@ -194,8 +194,11 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     private async Task OnMessageAsync(object sender, BasicDeliverEventArgs envelope)
     {
+        if (_subscriberChannel is not { } subscriberChannel)
+            throw new InvalidOperationException("Subscriber channel is not initialized.");
+
         using var _ = _logger.BeginScope(s => s
-            .Property("MessageId", envelope.BasicProperties.MessageId ?? "(none)")
+            .Property("MessageId", envelope.BasicProperties.MessageId)
             .Property("DeliveryTag", envelope.DeliveryTag));
 
         _logger.LogTrace("OnMessageAsync({MessageId})", envelope.BasicProperties.MessageId);
@@ -203,8 +206,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         if (_subscribers.IsEmpty)
         {
             _logger.LogTrace("No subscribers ({MessageId})", envelope.BasicProperties.MessageId);
-            if (_options.AcknowledgementStrategy == AcknowledgementStrategy.Automatic && _subscriberChannel is { } rejectChannel)
-                await rejectChannel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
+            if (_options.AcknowledgementStrategy == AcknowledgementStrategy.Automatic)
+                await subscriberChannel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
 
             return;
         }
@@ -214,8 +217,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             var message = ConvertToMessage(envelope);
             await SendMessageToSubscribersAsync(message).AnyContext();
 
-            if (_options.AcknowledgementStrategy == AcknowledgementStrategy.Automatic && _subscriberChannel is { } ackChannel)
-                await ackChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
+            if (_options.AcknowledgementStrategy == AcknowledgementStrategy.Automatic)
+                await subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
         }
         catch (MessageBusException)
         {
@@ -232,16 +235,15 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     private async Task HandleDeliveryLimitsAsync(BasicDeliverEventArgs envelope)
     {
-        var channel = _subscriberChannel;
-        if (channel is null)
-            return;
+        if (_subscriberChannel is not { } subscriberChannel)
+            throw new InvalidOperationException("Subscriber channel is not initialized.");
 
         // Rule 1: If the limit is negative, reject regardless of queue type
         if (_options.DeliveryLimit < 0)
         {
             _logger.LogDebug("Message ({MessageId}) rejected due to negative delivery limit ({DeliveryLimit})",
                 envelope.BasicProperties.MessageId, _options.DeliveryLimit);
-            await channel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
+            await subscriberChannel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
             return;
         }
 
@@ -262,14 +264,14 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
                     _logger.LogWarning(
                         "Quorum queue message ({MessageId}) delivery count ({DeliveryCount}) is over configured limit ({DeliveryLimit})",
                         envelope.BasicProperties.MessageId, retryCount, _options.DeliveryLimit);
-                    await channel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
+                    await subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
                 }
                 else
                 {
                     _logger.LogDebug(
                         "Quorum queue message ({MessageId}) has exceeded delivery limit ({DeliveryLimit}): Rejecting to let broker handle",
                         envelope.BasicProperties.MessageId, _options.DeliveryLimit);
-                    await channel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
+                    await subscriberChannel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
                 }
             }
             else
@@ -277,7 +279,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
                 _logger.LogDebug(
                     "Classic queue message ({MessageId}) has reached the delivery limit of {DeliveryLimit}: Acknowledging message",
                     envelope.BasicProperties.MessageId, _options.DeliveryLimit);
-                await channel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
+                await subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
             }
 
             return;
@@ -289,7 +291,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             _logger.LogDebug(
                 "Quorum queue message ({MessageId}) under delivery limit: Rejecting for broker-managed redelivery",
                 envelope.BasicProperties.MessageId);
-            await channel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
+            await subscriberChannel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
         }
         else
         {
@@ -299,6 +301,9 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     private async Task RepublishMessageWithIncrementedDeliveryCountAsync(BasicDeliverEventArgs envelope, long currentRetryCount)
     {
+        if (_subscriberChannel is not { } subscriberChannel)
+            throw new InvalidOperationException("Subscriber channel is not initialized.");
+
         string originalMessageId = GetOriginalMessageIdFromHeader(envelope);
         var properties = new BasicProperties(envelope.BasicProperties)
         {
@@ -320,9 +325,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         {
             await EnsureTopicCreatedAsync(envelope.CancellationToken).AnyContext();
             await PublishMessageAsync(envelope.Exchange, envelope.RoutingKey, envelope.Body.ToArray(), properties, envelope.CancellationToken).AnyContext();
-
-            if (_subscriberChannel is { } ackChannel)
-                await ackChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
+            await subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
 
             _logger.LogDebug("Republished classic queue message ({MessageId}) (OriginalMessageId={OriginalMessageId}) with delivery count {DeliveryCount}",
                 envelope.BasicProperties.MessageId, originalMessageId, currentRetryCount + 1);
@@ -330,9 +333,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to republish message ({MessageId}), acknowledging to prevent infinite retry", envelope.BasicProperties.MessageId);
-
-            if (_subscriberChannel is { } fallbackChannel)
-                await fallbackChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
+            await subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
         }
     }
 
@@ -360,16 +361,19 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             {
                 string str => str,
                 byte[] bytes => Encoding.UTF8.GetString(bytes),
-                null => envelope.BasicProperties.MessageId ?? string.Empty,
-                _ => xOriginalMessageId.ToString() ?? envelope.BasicProperties.MessageId ?? string.Empty
+                null => envelope.BasicProperties.MessageId ?? String.Empty,
+                _ => xOriginalMessageId.ToString() ?? envelope.BasicProperties.MessageId ?? String.Empty
             };
         }
 
-        return envelope.BasicProperties.MessageId ?? string.Empty;
+        return envelope.BasicProperties.MessageId ?? String.Empty;
     }
 
     private async Task PublishMessageAsync(string exchange, string routingKey, byte[] body, BasicProperties properties, CancellationToken cancellationToken)
     {
+        if (_publisherChannel is null)
+            throw new InvalidOperationException("Publisher channel must be initialized before publishing messages.");
+
         using (await _lock.LockAsync(cancellationToken).AnyContext())
         {
             await _resiliencePolicy.ExecuteAsync(async _ =>
@@ -379,34 +383,28 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
                 if (_isPublisherBlocked)
                     throw new MessageBusException($"Cannot publish: publisher connection is blocked by broker ({_publisherBlockedReason ?? "resource alarm"})");
 
-                await _publisherChannel!.BasicPublishAsync(exchange, routingKey, mandatory: false, properties, body, cancellationToken: cancellationToken);
+                await _publisherChannel.BasicPublishAsync(exchange, routingKey, mandatory: false, properties, body, cancellationToken: cancellationToken);
             }, cancellationToken).AnyContext();
         }
     }
 
     protected virtual IMessage ConvertToMessage(BasicDeliverEventArgs envelope)
     {
-        var messageType = envelope.BasicProperties.Type;
-        if (String.IsNullOrEmpty(messageType))
-            _logger.LogTrace("Received message without a Type header ({MessageId})", envelope.BasicProperties.MessageId);
-
         var message = new Message(envelope.Body.ToArray(), DeserializeMessageBody)
         {
-            Type = messageType ?? string.Empty,
+            Type = envelope.BasicProperties.Type,
+            ClrType = GetMappedMessageType(envelope.BasicProperties.Type),
             CorrelationId = envelope.BasicProperties.CorrelationId,
             UniqueId = envelope.BasicProperties.MessageId
         };
-
-        if (messageType is not null)
-            message.ClrType = GetMappedMessageType(messageType);
 
         if (envelope.BasicProperties.Headers is not null)
             foreach (var header in envelope.BasicProperties.Headers)
             {
                 if (header.Value is byte[] byteData)
                     message.Properties[header.Key] = Encoding.UTF8.GetString(byteData);
-                else if (header.Value?.ToString() is { } stringValue)
-                    message.Properties[header.Key] = stringValue;
+                else
+                    message.Properties[header.Key] = header.Value?.ToString() ?? String.Empty;
             }
 
         return message;
@@ -827,57 +825,75 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     private void RegisterPublisherConnectionEventHandlers()
     {
-        _publisherConnection!.CallbackExceptionAsync += OnPublisherConnectionOnCallbackExceptionAsync;
-        _publisherConnection!.ConnectionBlockedAsync += OnPublisherConnectionOnConnectionBlockedAsync;
-        _publisherConnection!.ConnectionRecoveryErrorAsync += OnPublisherConnectionOnConnectionRecoveryErrorAsync;
-        _publisherConnection!.ConnectionShutdownAsync += OnPublisherConnectionOnConnectionShutdownAsync;
-        _publisherConnection!.ConnectionUnblockedAsync += OnPublisherConnectionOnConnectionUnblockedAsync;
-        _publisherConnection!.RecoveringConsumerAsync += OnPublisherConnectionOnRecoveringConsumerAsync;
-        _publisherConnection!.RecoverySucceededAsync += OnPublisherConnectionOnRecoverySucceededAsync;
+        if (_publisherConnection is null)
+            throw new InvalidOperationException("Publisher connection must be initialized before registering event handlers.");
+
+        _publisherConnection.CallbackExceptionAsync += OnPublisherConnectionOnCallbackExceptionAsync;
+        _publisherConnection.ConnectionBlockedAsync += OnPublisherConnectionOnConnectionBlockedAsync;
+        _publisherConnection.ConnectionRecoveryErrorAsync += OnPublisherConnectionOnConnectionRecoveryErrorAsync;
+        _publisherConnection.ConnectionShutdownAsync += OnPublisherConnectionOnConnectionShutdownAsync;
+        _publisherConnection.ConnectionUnblockedAsync += OnPublisherConnectionOnConnectionUnblockedAsync;
+        _publisherConnection.RecoveringConsumerAsync += OnPublisherConnectionOnRecoveringConsumerAsync;
+        _publisherConnection.RecoverySucceededAsync += OnPublisherConnectionOnRecoverySucceededAsync;
     }
 
     private void UnregisterPublisherConnectionEventHandlers()
     {
-        _publisherConnection!.CallbackExceptionAsync -= OnPublisherConnectionOnCallbackExceptionAsync;
-        _publisherConnection!.ConnectionBlockedAsync -= OnPublisherConnectionOnConnectionBlockedAsync;
-        _publisherConnection!.ConnectionRecoveryErrorAsync -= OnPublisherConnectionOnConnectionRecoveryErrorAsync;
-        _publisherConnection!.ConnectionShutdownAsync -= OnPublisherConnectionOnConnectionShutdownAsync;
-        _publisherConnection!.ConnectionUnblockedAsync -= OnPublisherConnectionOnConnectionUnblockedAsync;
-        _publisherConnection!.RecoveringConsumerAsync -= OnPublisherConnectionOnRecoveringConsumerAsync;
-        _publisherConnection!.RecoverySucceededAsync -= OnPublisherConnectionOnRecoverySucceededAsync;
+        if (_publisherConnection is null)
+            throw new InvalidOperationException("Publisher connection must be initialized before unregistering event handlers.");
+
+        _publisherConnection.CallbackExceptionAsync -= OnPublisherConnectionOnCallbackExceptionAsync;
+        _publisherConnection.ConnectionBlockedAsync -= OnPublisherConnectionOnConnectionBlockedAsync;
+        _publisherConnection.ConnectionRecoveryErrorAsync -= OnPublisherConnectionOnConnectionRecoveryErrorAsync;
+        _publisherConnection.ConnectionShutdownAsync -= OnPublisherConnectionOnConnectionShutdownAsync;
+        _publisherConnection.ConnectionUnblockedAsync -= OnPublisherConnectionOnConnectionUnblockedAsync;
+        _publisherConnection.RecoveringConsumerAsync -= OnPublisherConnectionOnRecoveringConsumerAsync;
+        _publisherConnection.RecoverySucceededAsync -= OnPublisherConnectionOnRecoverySucceededAsync;
     }
 
     private void RegisterSubscriberConnectionEventHandlers()
     {
-        _subscriberConnection!.CallbackExceptionAsync += OnSubscriberConnectionOnCallbackExceptionAsync;
-        _subscriberConnection!.ConnectionBlockedAsync += OnSubscriberConnectionOnConnectionBlockedAsync;
-        _subscriberConnection!.ConnectionRecoveryErrorAsync += OnSubscriberConnectionOnConnectionRecoveryErrorAsync;
-        _subscriberConnection!.ConnectionShutdownAsync += OnSubscriberConnectionOnConnectionShutdownAsync;
-        _subscriberConnection!.ConnectionUnblockedAsync += OnSubscriberConnectionOnConnectionUnblockedAsync;
-        _subscriberConnection!.RecoveringConsumerAsync += OnSubscriberConnectionOnRecoveringConsumerAsync;
-        _subscriberConnection!.RecoverySucceededAsync += OnSubscriberConnectionOnRecoverySucceededAsync;
+        if (_subscriberConnection is null)
+            throw new InvalidOperationException("Subscriber connection must be initialized before registering event handlers.");
+
+        _subscriberConnection.CallbackExceptionAsync += OnSubscriberConnectionOnCallbackExceptionAsync;
+        _subscriberConnection.ConnectionBlockedAsync += OnSubscriberConnectionOnConnectionBlockedAsync;
+        _subscriberConnection.ConnectionRecoveryErrorAsync += OnSubscriberConnectionOnConnectionRecoveryErrorAsync;
+        _subscriberConnection.ConnectionShutdownAsync += OnSubscriberConnectionOnConnectionShutdownAsync;
+        _subscriberConnection.ConnectionUnblockedAsync += OnSubscriberConnectionOnConnectionUnblockedAsync;
+        _subscriberConnection.RecoveringConsumerAsync += OnSubscriberConnectionOnRecoveringConsumerAsync;
+        _subscriberConnection.RecoverySucceededAsync += OnSubscriberConnectionOnRecoverySucceededAsync;
     }
 
     private void UnregisterSubscriberConnectionEventHandlers()
     {
-        _subscriberConnection!.CallbackExceptionAsync -= OnSubscriberConnectionOnCallbackExceptionAsync;
-        _subscriberConnection!.ConnectionBlockedAsync -= OnSubscriberConnectionOnConnectionBlockedAsync;
-        _subscriberConnection!.ConnectionRecoveryErrorAsync -= OnSubscriberConnectionOnConnectionRecoveryErrorAsync;
-        _subscriberConnection!.ConnectionShutdownAsync -= OnSubscriberConnectionOnConnectionShutdownAsync;
-        _subscriberConnection!.ConnectionUnblockedAsync -= OnSubscriberConnectionOnConnectionUnblockedAsync;
-        _subscriberConnection!.RecoveringConsumerAsync -= OnSubscriberConnectionOnRecoveringConsumerAsync;
-        _subscriberConnection!.RecoverySucceededAsync -= OnSubscriberConnectionOnRecoverySucceededAsync;
+        if (_subscriberConnection is null)
+            throw new InvalidOperationException("Subscriber connection must be initialized before unregistering event handlers.");
+
+        _subscriberConnection.CallbackExceptionAsync -= OnSubscriberConnectionOnCallbackExceptionAsync;
+        _subscriberConnection.ConnectionBlockedAsync -= OnSubscriberConnectionOnConnectionBlockedAsync;
+        _subscriberConnection.ConnectionRecoveryErrorAsync -= OnSubscriberConnectionOnConnectionRecoveryErrorAsync;
+        _subscriberConnection.ConnectionShutdownAsync -= OnSubscriberConnectionOnConnectionShutdownAsync;
+        _subscriberConnection.ConnectionUnblockedAsync -= OnSubscriberConnectionOnConnectionUnblockedAsync;
+        _subscriberConnection.RecoveringConsumerAsync -= OnSubscriberConnectionOnRecoveringConsumerAsync;
+        _subscriberConnection.RecoverySucceededAsync -= OnSubscriberConnectionOnRecoverySucceededAsync;
     }
 
     private void RegisterConsumerEventHandlers()
     {
-        _consumer!.ReceivedAsync += OnMessageAsync;
-        _consumer!.ShutdownAsync += OnConsumerShutdownAsync;
+        if (_consumer is null)
+            throw new InvalidOperationException("Consumer must be initialized before registering event handlers.");
+
+        _consumer.ReceivedAsync += OnMessageAsync;
+        _consumer.ShutdownAsync += OnConsumerShutdownAsync;
     }
 
     private void UnregisterConsumerEventHandlers()
     {
-        _consumer!.ReceivedAsync -= OnMessageAsync;
-        _consumer!.ShutdownAsync -= OnConsumerShutdownAsync;
+        if (_consumer is null)
+            throw new InvalidOperationException("Consumer must be initialized before unregistering event handlers.");
+
+        _consumer.ReceivedAsync -= OnMessageAsync;
+        _consumer.ShutdownAsync -= OnConsumerShutdownAsync;
     }
 }
