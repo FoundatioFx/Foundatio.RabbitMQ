@@ -236,7 +236,10 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private async Task HandleDeliveryLimitsAsync(BasicDeliverEventArgs envelope)
     {
         if (_subscriberChannel is not { } subscriberChannel)
-            throw new MessageBusException("Subscriber channel is not available. Cannot handle delivery limits.");
+        {
+            _logger.LogWarning("Subscriber channel is not available; skipping delivery limit handling for message ({MessageId})", envelope.BasicProperties.MessageId);
+            return;
+        }
 
         // Rule 1: If the limit is negative, reject regardless of queue type
         if (_options.DeliveryLimit < 0)
