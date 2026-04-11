@@ -194,7 +194,11 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private async Task OnMessageAsync(object sender, BasicDeliverEventArgs envelope)
     {
         if (_subscriberChannel is not { } subscriberChannel)
-            throw new MessageBusException("Subscriber channel is not available. Cannot process message.");
+        {
+            _logger.LogDebug("Ignoring message because subscriber channel is not available ({MessageId})",
+                envelope.BasicProperties?.MessageId);
+            return;
+        }
 
         using var _ = _logger.BeginScope(s => s
             .Property("MessageId", envelope.BasicProperties.MessageId)
@@ -305,7 +309,11 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private async Task RepublishMessageWithIncrementedDeliveryCountAsync(BasicDeliverEventArgs envelope, long currentRetryCount)
     {
         if (_subscriberChannel is not { } subscriberChannel)
-            throw new MessageBusException("Subscriber channel is not available. Cannot republish message.");
+        {
+            _logger.LogWarning("Skipping republish for message ({MessageId}) because the subscriber channel is unavailable; leaving message unacknowledged for broker redelivery",
+                envelope.BasicProperties.MessageId);
+            return;
+        }
 
         string? originalMessageId = GetOriginalMessageIdFromHeader(envelope);
         var properties = new BasicProperties(envelope.BasicProperties)
