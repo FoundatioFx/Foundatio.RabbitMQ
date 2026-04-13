@@ -68,7 +68,7 @@ Foundatio.RabbitMQ supports delayed message delivery via the `DeliveryDelay` opt
 
 1. **RabbitMQ < 4.3 with plugin installed**: If the [`rabbitmq_delayed_message_exchange`](https://github.com/rabbitmq/rabbitmq-delayed-message-exchange/) plugin is detected, it is used for delayed delivery. A warning is logged because the plugin is deprecated and will not work on RabbitMQ 4.3+.
 2. **RabbitMQ < 4.3 without plugin**: Falls back to an in-memory delay scheduler provided by `MessageBusBase`. Messages are held in process memory and delivered after the delay. **This is not durable** -- delayed messages are lost if the process restarts.
-3. **RabbitMQ >= 4.3**: The plugin probe is skipped entirely (the plugin depends on Mnesia, which was removed in 4.3). The in-memory fallback is used automatically.
+3. **When the RabbitMQ server version is detected as >= 4.3**: The plugin probe is skipped (the plugin depends on Mnesia, which was removed in 4.3), and the in-memory fallback is used automatically. If the server version cannot be determined from `ServerProperties["version"]`, the probe may still be attempted before falling back.
 
 **Migration guidance:**
 
