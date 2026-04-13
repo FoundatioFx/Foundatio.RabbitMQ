@@ -711,7 +711,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         }
 
         _delayedExchangePluginEnabled = success;
-        return success ? true : false;
+        return success;
     }
 
     private Task CreateRegularExchangeAsync(IChannel channel)
