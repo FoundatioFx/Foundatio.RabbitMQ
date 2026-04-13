@@ -111,7 +111,12 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             _subscriberChannel = await _subscriberConnection.CreateChannelAsync(cancellationToken: cancellationToken).AnyContext();
 
             // If InitPublisher is called first, then we will never come in this if-clause.
-            if (!await CreateDelayedExchangeAsync(_subscriberChannel).AnyContext())
+            var delayedExchangeResult = await CreateDelayedExchangeAsync(_subscriberChannel).AnyContext();
+            if (delayedExchangeResult is null)
+            {
+                await CreateRegularExchangeAsync(_subscriberChannel).AnyContext();
+            }
+            else if (delayedExchangeResult is false)
             {
                 await _subscriberChannel.DisposeAsync().AnyContext();
                 UnregisterSubscriberConnectionEventHandlers();
@@ -462,7 +467,12 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             // However, if the plugin is not installed this will throw an exception. In that case
             // we attempt to create a regular exchange. If the regular exchange also throws an exception
             // then troubleshoot the problem.
-            if (!await CreateDelayedExchangeAsync(_publisherChannel).AnyContext())
+            var delayedExchangeResult = await CreateDelayedExchangeAsync(_publisherChannel).AnyContext();
+            if (delayedExchangeResult is null)
+            {
+                await CreateRegularExchangeAsync(_publisherChannel).AnyContext();
+            }
+            else if (delayedExchangeResult is false)
             {
                 // if the initial exchange creation was not successful, then we must close the previous connection
                 // and establish the new client connection and model; otherwise you will keep receiving failure in creation
@@ -654,11 +664,15 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     /// rabbitmq_delayed_message_exchange plugin depends on Mnesia which was removed. When the server
     /// version could not be determined, the probe is still attempted so the plugin is used if available.
     /// </summary>
-    /// <returns>true if the delayed exchange was successfully declared, meaning the plugin is installed.</returns>
-    private async Task<bool> CreateDelayedExchangeAsync(IChannel channel)
+    /// <returns>
+    /// <c>true</c> if the delayed exchange was successfully declared (plugin is installed);
+    /// <c>null</c> if the probe was skipped or the result was already cached as disabled (the channel is still healthy);
+    /// <c>false</c> if the probe threw and the channel is likely closed.
+    /// </returns>
+    private async Task<bool?> CreateDelayedExchangeAsync(IChannel channel)
     {
         if (_delayedExchangePluginEnabled.HasValue)
-            return _delayedExchangePluginEnabled.Value;
+            return _delayedExchangePluginEnabled.Value ? true : null;
 
         if (_serverVersion is not null && _serverVersion >= _delayedExchangePluginIncompatibleVersion)
         {
@@ -666,7 +680,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
                 "Skipping delayed exchange plugin probe: RabbitMQ {ServerVersion} removed Mnesia, plugin is incompatible",
                 _serverVersion);
             _delayedExchangePluginEnabled = false;
-            return false;
+            return null;
         }
 
         bool success = true;
@@ -681,7 +695,12 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         }
         catch (OperationInterruptedException ex)
         {
-            _logger.LogInformation(ex, "Delayed exchange plugin not available: {Message}", ex.Message);
+            _logger.LogInformation(
+                ex,
+                "Unable to declare delayed exchange. ReplyCode: {ReplyCode}, ReplyText: {ReplyText}, Message: {Message}",
+                ex.ShutdownReason?.ReplyCode,
+                ex.ShutdownReason?.ReplyText,
+                ex.Message);
             success = false;
         }
 
@@ -692,7 +711,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         }
 
         _delayedExchangePluginEnabled = success;
-        return success;
+        return success ? true : false;
     }
 
     private Task CreateRegularExchangeAsync(IChannel channel)
