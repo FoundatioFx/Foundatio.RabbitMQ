@@ -457,6 +457,10 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
                 _publisherChannel = await _publisherConnection.CreateChannelAsync(cancellationToken: cancellationToken).AnyContext();
             }
 
+            // We first attempt to create "x-delayed-type". For this the rabbitmq_delayed_message_exchange plugin should be installed.
+            // However, if the plugin is not installed this will throw an exception. In that case
+            // we attempt to create a regular exchange. If the regular exchange also throws an exception
+            // then troubleshoot the problem.
             if (!await CreateDelayedExchangeAsync(_publisherChannel).AnyContext())
             {
                 // if the initial exchange creation was not successful, then we must close the previous connection
@@ -614,6 +618,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     /// <returns></returns>
     private Task<IConnection> CreateConnectionAsync()
     {
+        // Use multiple endpoints for failover support
         return _factory.CreateConnectionAsync(_endpoints);
     }
 
@@ -627,9 +632,12 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
             return;
 
         _serverVersion = version;
-        _logger.LogInformation("Connected to RabbitMQ server version {ServerVersion}", version);
+        _logger.LogDebug("Connected to RabbitMQ server version {ServerVersion}", version);
     }
 
+    /// <summary>
+    /// Parses the RabbitMQ broker version from AMQP server properties (the <c>version</c> field is UTF-8 bytes).
+    /// </summary>
     public static Version? ParseServerVersion(IDictionary<string, object?>? serverProperties)
     {
         if (serverProperties?.TryGetValue("version", out var versionObj) is not true
@@ -661,6 +669,10 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         bool success = true;
         try
         {
+            // This exchange is a delayed exchange (fanout). You need the rabbitmq_delayed_message_exchange plugin on RabbitMQ.
+            // Disclaimer: https://github.com/rabbitmq/rabbitmq-delayed-message-exchange/
+            // Please read the *Performance Impact* of the delayed exchange type.
+            // On RabbitMQ 4.3+ this probe is skipped (see method summary); the plugin is incompatible.
             var args = new Dictionary<string, object?> { { "x-delayed-type", ExchangeType.Fanout } };
             await channel.ExchangeDeclareAsync(_options.Topic, "x-delayed-message", _options.IsDurable, false, args).AnyContext();
         }
