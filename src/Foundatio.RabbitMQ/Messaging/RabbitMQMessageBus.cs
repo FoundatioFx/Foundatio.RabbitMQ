@@ -118,6 +118,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
                 await _subscriberConnection.DisposeAsync().AnyContext();
 
                 _subscriberConnection = await CreateConnectionAsync().AnyContext();
+                DetectServerVersion(_subscriberConnection);
                 RegisterSubscriberConnectionEventHandlers();
 
                 _subscriberChannel = await _subscriberConnection.CreateChannelAsync(cancellationToken: cancellationToken).AnyContext();
@@ -471,6 +472,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
                 await _publisherConnection.DisposeAsync().AnyContext();
 
                 _publisherConnection = await CreateConnectionAsync().AnyContext();
+                DetectServerVersion(_publisherConnection);
                 RegisterPublisherConnectionEventHandlers();
 
                 // Reset blocked state after handlers are registered
@@ -649,7 +651,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
     /// <summary>
     /// Attempts to create the delayed exchange. On RabbitMQ 4.3+ the probe is skipped because the
-    /// rabbitmq_delayed_message_exchange plugin depends on Mnesia which was removed.
+    /// rabbitmq_delayed_message_exchange plugin depends on Mnesia which was removed. When the server
+    /// version could not be determined, the probe is still attempted so the plugin is used if available.
     /// </summary>
     /// <returns>true if the delayed exchange was successfully declared, meaning the plugin is installed.</returns>
     private async Task<bool> CreateDelayedExchangeAsync(IChannel channel)
