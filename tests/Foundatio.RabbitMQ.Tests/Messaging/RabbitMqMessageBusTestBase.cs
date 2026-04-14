@@ -151,9 +151,9 @@ public abstract class RabbitMqMessageBusTestBase(string connectionString, ITestO
     }
 
     [Fact]
-    public override void CanDisposeWithNoSubscribersOrPublishers()
+    public override Task CanDisposeWithNoSubscribersOrPublishersAsync()
     {
-        base.CanDisposeWithNoSubscribersOrPublishers();
+        return base.CanDisposeWithNoSubscribersOrPublishersAsync();
     }
 
     [Fact]
