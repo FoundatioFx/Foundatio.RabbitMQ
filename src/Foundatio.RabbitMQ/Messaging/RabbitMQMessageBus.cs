@@ -14,7 +14,7 @@ using RabbitMQ.Client.Exceptions;
 
 namespace Foundatio.Messaging;
 
-public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAsyncDisposable
+public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
 {
     private const string XDeliveryCountHeader = "x-delivery-count";
     private const string XOriginalMessageIdHeader = "x-original-message-id";
@@ -31,7 +31,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     private bool? _delayedExchangePluginEnabled;
     private Version? _serverVersion;
     private readonly bool _isQuorumQueue;
-    private bool _isDisposed;
     private volatile bool _isPublisherBlocked;
     private volatile string? _publisherBlockedReason;
 
@@ -86,10 +85,12 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
     {
     }
 
-    protected override Task RemoveTopicSubscriptionAsync()
+    protected override async Task CleanupAsync()
     {
-        _logger.LogTrace("RemoveTopicSubscriptionAsync");
-        return CloseSubscriberConnectionAsync(DisposedCancellationToken);
+        _factory.AutomaticRecoveryEnabled = false;
+
+        await ClosePublisherConnectionAsync().AnyContext();
+        await CloseSubscriberConnectionAsync().AnyContext();
     }
 
     protected override async Task EnsureTopicSubscriptionAsync(CancellationToken cancellationToken)
@@ -231,6 +232,11 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
 
             if (_options.AcknowledgementStrategy == AcknowledgementStrategy.Automatic)
                 await subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
+        }
+        catch (OperationCanceledException)
+        {
+            if (_options.AcknowledgementStrategy == AcknowledgementStrategy.Automatic)
+                await subscriberChannel.BasicRejectAsync(envelope.DeliveryTag, true).AnyContext();
         }
         catch (MessageBusException)
         {
@@ -738,38 +744,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>, IAs
         await channel.QueueBindAsync(queueName, _options.Topic, "").AnyContext();
 
         return queueName;
-    }
-
-    public override void Dispose()
-    {
-        base.Dispose();
-
-        if (_isDisposed)
-            return;
-
-        _isDisposed = true;
-
-        _factory.AutomaticRecoveryEnabled = false;
-
-        ClosePublisherConnection();
-        CloseSubscriberConnection();
-        GC.SuppressFinalize(this);
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        base.Dispose();
-
-        if (_isDisposed)
-            return;
-
-        _isDisposed = true;
-
-        _factory.AutomaticRecoveryEnabled = false;
-
-        await ClosePublisherConnectionAsync().AnyContext();
-        await CloseSubscriberConnectionAsync().AnyContext();
-        GC.SuppressFinalize(this);
     }
 
     private void ClosePublisherConnection(CancellationToken cancellationToken = default)
