@@ -67,24 +67,6 @@ public abstract class RabbitMqMessageBusTestBase(string connectionString, ITestO
     }
 
     [Fact]
-    public override Task PublishAsync_WithCancellation_ThrowsOperationCanceledExceptionAsync()
-    {
-        return base.PublishAsync_WithCancellation_ThrowsOperationCanceledExceptionAsync();
-    }
-
-    [Fact]
-    public override Task PublishAsync_WithDelayedMessageAndDisposeBeforeDelivery_DiscardsMessageAsync()
-    {
-        return base.PublishAsync_WithDelayedMessageAndDisposeBeforeDelivery_DiscardsMessageAsync();
-    }
-
-    [Fact]
-    public override Task SubscribeAsync_WithCancellation_ThrowsOperationCanceledExceptionAsync()
-    {
-        return base.SubscribeAsync_WithCancellation_ThrowsOperationCanceledExceptionAsync();
-    }
-
-    [Fact]
     public override Task CanSubscribeConcurrentlyAsync()
     {
         return base.CanSubscribeConcurrentlyAsync();
@@ -157,6 +139,13 @@ public abstract class RabbitMqMessageBusTestBase(string connectionString, ITestO
     }
 
     [Fact]
+    public override Task CanHandlePoisonedMessageAsync()
+    {
+        // Fire and Forget is the default
+        return base.CanHandlePoisonedMessageAsync();
+    }
+
+    [Fact]
     public override Task DisposeAsync_CalledMultipleTimes_IsIdempotentAsync()
     {
         return base.DisposeAsync_CalledMultipleTimes_IsIdempotentAsync();
@@ -181,6 +170,24 @@ public abstract class RabbitMqMessageBusTestBase(string connectionString, ITestO
     }
 
     [Fact]
+    public override Task PublishAsync_WithCancellation_ThrowsOperationCanceledExceptionAsync()
+    {
+        return base.PublishAsync_WithCancellation_ThrowsOperationCanceledExceptionAsync();
+    }
+
+    [Fact]
+    public override Task PublishAsync_WithDelayedMessageAndDisposeBeforeDelivery_DiscardsMessageAsync()
+    {
+        return base.PublishAsync_WithDelayedMessageAndDisposeBeforeDelivery_DiscardsMessageAsync();
+    }
+
+    [Fact]
+    public override Task PublishAsync_WithSerializationFailure_ThrowsSerializerExceptionAsync()
+    {
+        return base.PublishAsync_WithSerializationFailure_ThrowsSerializerExceptionAsync();
+    }
+
+    [Fact]
     public override Task SubscribeAsync_AfterDispose_ThrowsMessageBusExceptionAsync()
     {
         return base.SubscribeAsync_AfterDispose_ThrowsMessageBusExceptionAsync();
@@ -193,28 +200,21 @@ public abstract class RabbitMqMessageBusTestBase(string connectionString, ITestO
     }
 
     [Fact]
-    public override Task CanHandlePoisonedMessageAsync()
+    public override Task SubscribeAsync_WithCancellation_ThrowsOperationCanceledExceptionAsync()
     {
-        // Fire and Forget is the default
-        return base.CanHandlePoisonedMessageAsync();
-    }
-
-    [Fact]
-    public override Task SubscribeAsync_WithValidThenPoisonedMessage_DeliversOnlyValidMessageAsync()
-    {
-        return base.SubscribeAsync_WithValidThenPoisonedMessage_DeliversOnlyValidMessageAsync();
-    }
-
-    [Fact]
-    public override Task PublishAsync_WithSerializationFailure_ThrowsSerializerExceptionAsync()
-    {
-        return base.PublishAsync_WithSerializationFailure_ThrowsSerializerExceptionAsync();
+        return base.SubscribeAsync_WithCancellation_ThrowsOperationCanceledExceptionAsync();
     }
 
     [Fact]
     public override Task SubscribeAsync_WithDeserializationFailure_SkipsMessageAsync()
     {
         return base.SubscribeAsync_WithDeserializationFailure_SkipsMessageAsync();
+    }
+
+    [Fact]
+    public override Task SubscribeAsync_WithValidThenPoisonedMessage_DeliversOnlyValidMessageAsync()
+    {
+        return base.SubscribeAsync_WithValidThenPoisonedMessage_DeliversOnlyValidMessageAsync();
     }
 
     [Fact]
