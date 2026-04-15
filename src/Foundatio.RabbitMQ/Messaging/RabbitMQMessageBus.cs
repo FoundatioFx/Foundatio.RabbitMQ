@@ -85,6 +85,11 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
     {
     }
 
+    protected override async Task RemoveTopicSubscriptionAsync()
+    {
+        await CloseSubscriberConnectionAsync().AnyContext();
+    }
+
     protected override async Task CleanupAsync()
     {
         _factory.AutomaticRecoveryEnabled = false;
