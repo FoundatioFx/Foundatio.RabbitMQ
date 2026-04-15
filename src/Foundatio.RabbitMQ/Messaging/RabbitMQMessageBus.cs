@@ -746,30 +746,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         return queueName;
     }
 
-    private void ClosePublisherConnection(CancellationToken cancellationToken = default)
-    {
-        if (_publisherConnection is null)
-            return;
-
-        using (_lock.Lock(cancellationToken))
-        {
-            _logger.LogTrace("ClosePublisherConnection");
-
-            if (_publisherChannel is not null)
-            {
-                _publisherChannel.Dispose();
-                _publisherChannel = null;
-            }
-
-            if (_publisherConnection is not null)
-            {
-                UnregisterPublisherConnectionEventHandlers();
-                _publisherConnection.Dispose();
-                _publisherConnection = null;
-            }
-        }
-    }
-
     private async Task ClosePublisherConnectionAsync()
     {
         if (_publisherConnection is null)
@@ -790,36 +766,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
                 UnregisterPublisherConnectionEventHandlers();
                 await _publisherConnection.DisposeAsync().AnyContext();
                 _publisherConnection = null;
-            }
-        }
-    }
-
-    private void CloseSubscriberConnection(CancellationToken cancellationToken = default)
-    {
-        if (_subscriberConnection is null)
-            return;
-
-        using (_lock.Lock(cancellationToken))
-        {
-            _logger.LogTrace("CloseSubscriberConnection");
-
-            if (_consumer is not null)
-            {
-                UnregisterConsumerEventHandlers();
-                _consumer = null;
-            }
-
-            if (_subscriberChannel is not null)
-            {
-                _subscriberChannel.Dispose();
-                _subscriberChannel = null;
-            }
-
-            if (_subscriberConnection is not null)
-            {
-                UnregisterSubscriberConnectionEventHandlers();
-                _subscriberConnection.Dispose();
-                _subscriberConnection = null;
             }
         }
     }
