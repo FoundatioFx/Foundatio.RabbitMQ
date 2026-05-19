@@ -26,7 +26,7 @@ public class RabbitMqPublishResilienceTests(ITestOutputHelper output) : RabbitMq
             messageBus.PublishAsync(new SimpleMessageA { Data = "should fail" },
                 cancellationToken: cts.Token));
 
-        Assert.Contains("publisher channel was closed", ex.Message);
+        Assert.Contains("publisher channel is closed", ex.Message);
     }
 
     [Fact]
