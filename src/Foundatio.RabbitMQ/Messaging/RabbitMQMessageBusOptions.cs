@@ -220,6 +220,7 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
     /// <returns>The builder instance for method chaining.</returns>
     public RabbitMQMessageBusOptionsBuilder PublishRecoveryTimeout(TimeSpan timeout)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThan(timeout, TimeSpan.Zero);
         Target.PublishRecoveryTimeout = timeout;
         return this;
     }

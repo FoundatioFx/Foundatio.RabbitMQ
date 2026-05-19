@@ -415,7 +415,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
             catch (TimeoutException)
             {
                 throw new MessageBusException(
-                    $"Publish failed: connection recovery did not complete within {_options.PublishRecoveryTimeout.TotalSeconds:F0}s timeout.");
+                    $"Publish failed: connection recovery did not complete within {_options.PublishRecoveryTimeout.TotalMilliseconds:F0}ms timeout.");
             }
         }
 
@@ -940,11 +940,23 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
 
     /// <summary>
     /// Simulates a publisher connection shutdown event for testing.
-    /// Triggers the full shutdown handler including gate closure for non-application shutdowns.
+    /// Triggers the full shutdown handler (gate closure) and nulls the publisher channel
+    /// to represent a real unexpected disconnect.
     /// </summary>
-    internal Task SimulatePublisherConnectionShutdownAsync()
+    internal async Task SimulatePublisherConnectionShutdownAsync()
     {
-        return OnPublisherConnectionOnConnectionShutdownAsync(this,
+        await OnPublisherConnectionOnConnectionShutdownAsync(this,
             new ShutdownEventArgs(ShutdownInitiator.Library, 541, "Simulated connection reset"));
+        _publisherChannel = null;
+    }
+
+    /// <summary>
+    /// Simulates a connection recovery error event for testing.
+    /// Verifies the gate remains closed (recovery continues retrying).
+    /// </summary>
+    internal Task SimulatePublisherConnectionRecoveryErrorAsync()
+    {
+        return OnPublisherConnectionOnConnectionRecoveryErrorAsync(this,
+            new ConnectionRecoveryErrorEventArgs(new Exception("Simulated recovery failure")));
     }
 }

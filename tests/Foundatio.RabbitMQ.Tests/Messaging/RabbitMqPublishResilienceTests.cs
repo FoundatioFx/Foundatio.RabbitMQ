@@ -21,11 +21,12 @@ public class RabbitMqPublishResilienceTests(ITestOutputHelper output) : RabbitMq
 
         await messageBus.SimulatePublisherConnectionShutdownAsync();
 
-        var ex = await Assert.ThrowsAnyAsync<Exception>(() =>
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var ex = await Assert.ThrowsAsync<MessageBusException>(() =>
             messageBus.PublishAsync(new SimpleMessageA { Data = "should fail" },
-                cancellationToken: new CancellationTokenSource(TimeSpan.FromSeconds(3)).Token));
+                cancellationToken: cts.Token));
 
-        Assert.True(ex is MessageBusException || ex is OperationCanceledException);
+        Assert.Contains("publisher channel was closed", ex.Message);
     }
 
     [Fact]
@@ -40,8 +41,9 @@ public class RabbitMqPublishResilienceTests(ITestOutputHelper output) : RabbitMq
 
         messageBus.SimulatePublisherConnectionLost();
 
+        using var publishCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var publishTask = messageBus.PublishAsync(new SimpleMessageA { Data = "during recovery" },
-            cancellationToken: new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token);
+            cancellationToken: publishCts.Token);
 
         await Task.Delay(100, TestCancellationToken);
         Assert.False(publishTask.IsCompleted);
@@ -115,8 +117,9 @@ public class RabbitMqPublishResilienceTests(ITestOutputHelper output) : RabbitMq
 
         messageBus.SimulatePublisherConnectionLost();
 
+        using var publishCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var publishTask = messageBus.PublishAsync(new SimpleMessageA { Data = "should fail on disposal" },
-            cancellationToken: new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token);
+            cancellationToken: publishCts.Token);
 
         await Task.Delay(50, TestCancellationToken);
         Assert.False(publishTask.IsCompleted);
@@ -128,7 +131,7 @@ public class RabbitMqPublishResilienceTests(ITestOutputHelper output) : RabbitMq
     }
 
     [Fact]
-    public async Task PublishAsync_RecoveryError_StaysBlocked()
+    public async Task PublishAsync_RecoveryErrorDoesNotOpenGate_WaitsUntilTimeout()
     {
         await using var messageBus = new RabbitMQMessageBus(o => o
             .ConnectionString(ConnectionString)
@@ -139,13 +142,16 @@ public class RabbitMqPublishResilienceTests(ITestOutputHelper output) : RabbitMq
 
         messageBus.SimulatePublisherConnectionLost();
 
+        using var publishCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var publishTask = messageBus.PublishAsync(new SimpleMessageA { Data = "should stay blocked" },
-            cancellationToken: new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
+            cancellationToken: publishCts.Token);
 
-        await Task.Delay(100, TestCancellationToken);
+        await Task.Delay(50, TestCancellationToken);
         Assert.False(publishTask.IsCompleted);
 
-        await Task.Delay(100, TestCancellationToken);
+        await messageBus.SimulatePublisherConnectionRecoveryErrorAsync();
+
+        await Task.Delay(50, TestCancellationToken);
         Assert.False(publishTask.IsCompleted);
 
         var ex = await Assert.ThrowsAsync<MessageBusException>(() => publishTask);
