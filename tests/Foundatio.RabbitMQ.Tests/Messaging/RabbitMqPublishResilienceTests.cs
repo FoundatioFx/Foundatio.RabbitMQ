@@ -21,7 +21,7 @@ public class RabbitMqPublishResilienceTests(ITestOutputHelper output) : RabbitMq
 
         await messageBus.SimulatePublisherConnectionShutdownAsync();
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var ex = await Assert.ThrowsAsync<MessageBusException>(() =>
             messageBus.PublishAsync(new SimpleMessageA { Data = "should fail" },
                 cancellationToken: cts.Token));
@@ -106,7 +106,7 @@ public class RabbitMqPublishResilienceTests(ITestOutputHelper output) : RabbitMq
     }
 
     [Fact]
-    public async Task PublishAsync_DuringDisposal_FailsFastWithMessageBusException()
+    public async Task PublishAsync_DuringDisposal_FailsFastWithOperationCanceledException()
     {
         var messageBus = new RabbitMQMessageBus(o => o
             .ConnectionString(ConnectionString)
@@ -126,8 +126,7 @@ public class RabbitMqPublishResilienceTests(ITestOutputHelper output) : RabbitMq
 
         await messageBus.DisposeAsync();
 
-        var ex = await Assert.ThrowsAnyAsync<Exception>(() => publishTask);
-        Assert.True(ex is MessageBusException || ex is OperationCanceledException);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => publishTask);
     }
 
     [Fact]

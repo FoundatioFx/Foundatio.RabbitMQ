@@ -94,7 +94,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
     protected override async Task CleanupAsync()
     {
         _factory.AutomaticRecoveryEnabled = false;
-        _publisherReady.Set();
 
         await ClosePublisherConnectionAsync().AnyContext();
         await CloseSubscriberConnectionAsync().AnyContext();
@@ -404,23 +403,26 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
 
     private async Task PublishMessageAsync(string exchange, string routingKey, byte[] body, BasicProperties properties, CancellationToken cancellationToken)
     {
-        if (!_publisherReady.IsSet && _options.PublishRecoveryTimeout > TimeSpan.Zero)
-        {
-            _logger.LogDebug("Publisher waiting for connection recovery...");
-            try
-            {
-                await _publisherReady.WaitAsync(cancellationToken)
-                    .WaitAsync(_options.PublishRecoveryTimeout, cancellationToken).AnyContext();
-            }
-            catch (TimeoutException)
-            {
-                throw new MessageBusException(
-                    $"Publish failed: connection recovery did not complete within {_options.PublishRecoveryTimeout.TotalMilliseconds:F0}ms timeout.");
-            }
-        }
-
         await _resiliencePolicy.ExecuteAsync(async _ =>
         {
+            if (!_publisherReady.IsSet)
+            {
+                if (_options.PublishRecoveryTimeout <= TimeSpan.Zero)
+                    throw new MessageBusException("Cannot publish: publisher channel is closed or unavailable.");
+
+                _logger.LogDebug("Publisher waiting for connection recovery...");
+                try
+                {
+                    await _publisherReady.WaitAsync(cancellationToken)
+                        .WaitAsync(_options.PublishRecoveryTimeout, cancellationToken).AnyContext();
+                }
+                catch (TimeoutException)
+                {
+                    throw new MessageBusException(
+                        $"Publish failed: connection recovery did not complete within {_options.PublishRecoveryTimeout.TotalMilliseconds:F0}ms timeout.");
+                }
+            }
+
             using (await _lock.LockAsync(cancellationToken).AnyContext())
             {
                 if (_publisherChannel is not { IsOpen: true } channel)
@@ -603,9 +605,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
     /// The same is a good idea for consumers.</remarks>
     protected override async Task PublishImplAsync(string messageType, object message, MessageOptions options, CancellationToken cancellationToken)
     {
-        if (_isPublisherBlocked)
-            throw new MessageBusException($"Cannot publish: publisher connection is blocked by broker ({_publisherBlockedReason ?? "resource alarm"})");
-
         byte[] data = SerializeMessageBody(messageType, message);
 
         // if the RabbitMQ plugin is not available, then use the base class delay mechanism
