@@ -419,19 +419,20 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
             }
         }
 
-        using (await _lock.LockAsync(cancellationToken).AnyContext())
+        await _resiliencePolicy.ExecuteAsync(async _ =>
         {
-            if (_publisherChannel is not { } channel)
-                throw new MessageBusException("Cannot publish: publisher channel was closed.");
-
-            await _resiliencePolicy.ExecuteAsync(async _ =>
+            using (await _lock.LockAsync(cancellationToken).AnyContext())
             {
+                if (_publisherChannel is not { IsOpen: true } channel)
+                    throw new MessageBusException("Cannot publish: publisher channel is closed or unavailable.");
+
                 if (_isPublisherBlocked)
-                    throw new MessageBusException($"Cannot publish: publisher connection is blocked by broker ({_publisherBlockedReason ?? "resource alarm"})");
+                    throw new MessageBusException(
+                        $"Cannot publish: publisher connection is blocked by broker ({_publisherBlockedReason ?? "resource alarm"})");
 
                 await channel.BasicPublishAsync(exchange, routingKey, mandatory: false, properties, body, cancellationToken: cancellationToken);
-            }, cancellationToken).AnyContext();
-        }
+            }
+        }, cancellationToken).AnyContext();
     }
 
     protected virtual IMessage ConvertToMessage(BasicDeliverEventArgs envelope)
