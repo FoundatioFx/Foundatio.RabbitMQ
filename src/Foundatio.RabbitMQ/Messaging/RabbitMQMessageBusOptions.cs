@@ -89,6 +89,15 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     /// See: https://www.rabbitmq.com/docs/confirms#publisher-confirms
     /// </summary>
     public bool PublisherConfirmsEnabled { get; set; }
+
+    /// <summary>
+    /// Maximum time PublishAsync will wait for connection recovery before failing.
+    /// During a transient connection drop, publishes suspend (rather than failing immediately)
+    /// and resume automatically when the connection recovers.
+    /// Set to TimeSpan.Zero to disable (fail immediately on connection drop, like pre-fix behavior).
+    /// Default: 10 seconds (covers one full NetworkRecoveryInterval cycle with margin).
+    /// </summary>
+    public TimeSpan PublishRecoveryTimeout { get; set; } = TimeSpan.FromSeconds(10);
 }
 
 public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<RabbitMQMessageBusOptions, RabbitMQMessageBusOptionsBuilder>
@@ -199,6 +208,19 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
     public RabbitMQMessageBusOptionsBuilder PublisherConfirmsEnabled(bool enabled = true)
     {
         Target.PublisherConfirmsEnabled = enabled;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the maximum time PublishAsync will wait for connection recovery before failing.
+    /// During a transient connection drop, publishes suspend and resume automatically on recovery.
+    /// Set to TimeSpan.Zero to disable waiting (fail immediately on connection drop).
+    /// </summary>
+    /// <param name="timeout">Maximum recovery wait time. Default: 10 seconds.</param>
+    /// <returns>The builder instance for method chaining.</returns>
+    public RabbitMQMessageBusOptionsBuilder PublishRecoveryTimeout(TimeSpan timeout)
+    {
+        Target.PublishRecoveryTimeout = timeout;
         return this;
     }
 

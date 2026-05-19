@@ -21,6 +21,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
     private static readonly Version _delayedExchangePluginIncompatibleVersion = new(4, 3);
 
     private readonly AsyncLock _lock = new();
+    private readonly AsyncManualResetEvent _publisherReady = new(true);
     private readonly ConnectionFactory _factory;
     private readonly List<AmqpTcpEndpoint> _endpoints;
     private IConnection? _publisherConnection;
@@ -93,6 +94,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
     protected override async Task CleanupAsync()
     {
         _factory.AutomaticRecoveryEnabled = false;
+        _publisherReady.Set();
 
         await ClosePublisherConnectionAsync().AnyContext();
         await CloseSubscriberConnectionAsync().AnyContext();
@@ -402,6 +404,21 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
 
     private async Task PublishMessageAsync(string exchange, string routingKey, byte[] body, BasicProperties properties, CancellationToken cancellationToken)
     {
+        if (!_publisherReady.IsSet && _options.PublishRecoveryTimeout > TimeSpan.Zero)
+        {
+            _logger.LogDebug("Publisher waiting for connection recovery...");
+            try
+            {
+                await _publisherReady.WaitAsync(cancellationToken)
+                    .WaitAsync(_options.PublishRecoveryTimeout, cancellationToken).AnyContext();
+            }
+            catch (TimeoutException)
+            {
+                throw new MessageBusException(
+                    $"Publish failed: connection recovery did not complete within {_options.PublishRecoveryTimeout.TotalSeconds:F0}s timeout.");
+            }
+        }
+
         using (await _lock.LockAsync(cancellationToken).AnyContext())
         {
             if (_publisherChannel is not { } channel)
@@ -409,8 +426,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
 
             await _resiliencePolicy.ExecuteAsync(async _ =>
             {
-                // Check blocked state inside resilience policy - re-evaluated on each retry
-                // MessageBusException is excluded from retries in the base class policy
                 if (_isPublisherBlocked)
                     throw new MessageBusException($"Cannot publish: publisher connection is blocked by broker ({_publisherBlockedReason ?? "resource alarm"})");
 
@@ -534,12 +549,19 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
 
     private Task OnPublisherConnectionOnConnectionRecoveryErrorAsync(object sender, ConnectionRecoveryErrorEventArgs e)
     {
-        _logger.LogError(e.Exception, "Publisher connection recovery error: {Message}", e.Exception.Message);
+        _logger.LogError(e.Exception, "Publisher connection recovery attempt failed, retrying: {Message}", e.Exception.Message);
         return Task.CompletedTask;
     }
 
     private Task OnPublisherConnectionOnConnectionShutdownAsync(object sender, ShutdownEventArgs e)
     {
+        if (e.Initiator != ShutdownInitiator.Application)
+        {
+            _publisherReady.Reset();
+            _logger.LogWarning("Publisher connection lost (Reply Code: {ReplyCode}, Reason: {ReplyText}). Publishes will wait up to {Timeout:g} for recovery.",
+                e.ReplyCode, e.ReplyText, _options.PublishRecoveryTimeout);
+        }
+
         _logger.LogInformation(e.Exception, "Publisher shutdown. Reply Code: {ReplyCode} Reason: {ReplyText} Initiator: {Initiator}", e.ReplyCode, e.ReplyText, e.Initiator);
         return Task.CompletedTask;
     }
@@ -560,9 +582,9 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
 
     private Task OnPublisherConnectionOnRecoverySucceededAsync(object sender, AsyncEventArgs e)
     {
-        // Reset blocked state on recovery - the new connection starts unblocked
         _isPublisherBlocked = false;
         _publisherBlockedReason = null;
+        _publisherReady.Set();
         _logger.LogInformation("Publisher connection recovery succeeded");
         return Task.CompletedTask;
     }
@@ -896,5 +918,33 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
 
         _consumer.ReceivedAsync -= OnMessageAsync;
         _consumer.ShutdownAsync -= OnConsumerShutdownAsync;
+    }
+
+    /// <summary>
+    /// Simulates an unexpected publisher connection loss for testing the recovery gate.
+    /// Closes the gate so that subsequent publishes will wait for recovery.
+    /// </summary>
+    internal void SimulatePublisherConnectionLost()
+    {
+        _publisherReady.Reset();
+    }
+
+    /// <summary>
+    /// Simulates a successful publisher connection recovery for testing.
+    /// Opens the gate so that waiting publishes resume.
+    /// </summary>
+    internal void SimulatePublisherRecoverySucceeded()
+    {
+        _publisherReady.Set();
+    }
+
+    /// <summary>
+    /// Simulates a publisher connection shutdown event for testing.
+    /// Triggers the full shutdown handler including gate closure for non-application shutdowns.
+    /// </summary>
+    internal Task SimulatePublisherConnectionShutdownAsync()
+    {
+        return OnPublisherConnectionOnConnectionShutdownAsync(this,
+            new ShutdownEventArgs(ShutdownInitiator.Library, 541, "Simulated connection reset"));
     }
 }
