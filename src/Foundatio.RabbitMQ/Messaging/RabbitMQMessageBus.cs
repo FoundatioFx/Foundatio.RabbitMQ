@@ -94,6 +94,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
     protected override async Task CleanupAsync()
     {
         _factory.AutomaticRecoveryEnabled = false;
+        _publisherReady.Set();
 
         await ClosePublisherConnectionAsync().AnyContext();
         await CloseSubscriberConnectionAsync().AnyContext();
@@ -428,6 +429,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
                 if (_publisherChannel is not { IsOpen: true } channel)
                     throw new MessageBusException("Cannot publish: publisher channel is closed or unavailable.");
 
+                // Fail fast on broker resource alarms -- retrying would add pressure to a constrained broker.
+                // Unlike connection drops (which use the recovery gate to wait), blocked state has no recovery signal timing.
                 if (_isPublisherBlocked)
                     throw new MessageBusException(
                         $"Cannot publish: publisher connection is blocked by broker ({_publisherBlockedReason ?? "resource alarm"})");
@@ -603,10 +606,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
     /// <param name="message"></param>
     /// <param name="options">Message options</param>
     /// <param name="cancellationToken"></param>
-    /// <remarks>RabbitMQ has an upper limit of 2GB for messages.BasicPublish blocking AMQP operations.
-    /// The rule of thumb is: avoid sharing channels across threads.
-    /// Publishers in your application that publish from separate threads should use their own channels.
-    /// The same is a good idea for consumers.</remarks>
     protected override async Task PublishImplAsync(string messageType, object message, MessageOptions options, CancellationToken cancellationToken)
     {
         byte[] data = SerializeMessageBody(messageType, message);
