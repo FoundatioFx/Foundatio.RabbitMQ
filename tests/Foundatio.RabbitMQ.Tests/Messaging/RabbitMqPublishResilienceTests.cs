@@ -141,7 +141,7 @@ public class RabbitMqPublishResilienceTests(ITestOutputHelper output) : RabbitMq
 
         messageBus.SimulatePublisherConnectionLost();
 
-        using var publishCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var publishCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var publishTask = messageBus.PublishAsync(new SimpleMessageA { Data = "should stay blocked" },
             cancellationToken: publishCts.Token);
 
