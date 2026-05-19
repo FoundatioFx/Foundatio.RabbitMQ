@@ -113,20 +113,27 @@ public class RabbitMqPublishResilienceTests(ITestOutputHelper output) : RabbitMq
             .LoggerFactory(Log)
             .PublishRecoveryTimeout(TimeSpan.FromSeconds(30)));
 
-        await messageBus.PublishAsync(new SimpleMessageA { Data = "warmup" }, cancellationToken: TestCancellationToken);
+        try
+        {
+            await messageBus.PublishAsync(new SimpleMessageA { Data = "warmup" }, cancellationToken: TestCancellationToken);
 
-        messageBus.SimulatePublisherConnectionLost();
+            messageBus.SimulatePublisherConnectionLost();
 
-        using var publishCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var publishTask = messageBus.PublishAsync(new SimpleMessageA { Data = "should fail on disposal" },
-            cancellationToken: publishCts.Token);
+            using var publishCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var publishTask = messageBus.PublishAsync(new SimpleMessageA { Data = "should fail on disposal" },
+                cancellationToken: publishCts.Token);
 
-        await Task.Delay(50, TestCancellationToken);
-        Assert.False(publishTask.IsCompleted);
+            await Task.Delay(50, TestCancellationToken);
+            Assert.False(publishTask.IsCompleted);
 
-        await messageBus.DisposeAsync();
+            await messageBus.DisposeAsync();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => publishTask);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => publishTask);
+        }
+        finally
+        {
+            await messageBus.DisposeAsync();
+        }
     }
 
     [Fact]

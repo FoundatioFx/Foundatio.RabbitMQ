@@ -561,8 +561,12 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         if (e.Initiator != ShutdownInitiator.Application)
         {
             _publisherReady.Reset();
-            _logger.LogWarning("Publisher connection lost (Reply Code: {ReplyCode}, Reason: {ReplyText}). Publishes will wait up to {Timeout:g} for recovery.",
-                e.ReplyCode, e.ReplyText, _options.PublishRecoveryTimeout);
+            if (_options.PublishRecoveryTimeout > TimeSpan.Zero)
+                _logger.LogWarning("Publisher connection lost (Reply Code: {ReplyCode}, Reason: {ReplyText}). Publishes will wait up to {Timeout:g} for recovery.",
+                    e.ReplyCode, e.ReplyText, _options.PublishRecoveryTimeout);
+            else
+                _logger.LogWarning("Publisher connection lost (Reply Code: {ReplyCode}, Reason: {ReplyText}). Publishes will fail immediately (recovery timeout disabled).",
+                    e.ReplyCode, e.ReplyText);
         }
 
         _logger.LogInformation(e.Exception, "Publisher shutdown. Reply Code: {ReplyCode} Reason: {ReplyText} Initiator: {Initiator}", e.ReplyCode, e.ReplyText, e.Initiator);
@@ -946,7 +950,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
     internal async Task SimulatePublisherConnectionShutdownAsync()
     {
         await OnPublisherConnectionOnConnectionShutdownAsync(this,
-            new ShutdownEventArgs(ShutdownInitiator.Library, 541, "Simulated connection reset"));
+            new ShutdownEventArgs(ShutdownInitiator.Library, 541, "Simulated connection reset")).AnyContext();
         _publisherChannel = null;
     }
 
