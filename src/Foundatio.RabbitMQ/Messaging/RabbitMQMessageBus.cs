@@ -40,7 +40,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         ArgumentException.ThrowIfNullOrWhiteSpace(options?.ConnectionString, nameof(options.ConnectionString));
 
         if (!Uri.TryCreate(options.ConnectionString, UriKind.Absolute, out var primaryUri))
-            throw new ArgumentException($"ConnectionString is not a valid URI: {SanitizeUri(options.ConnectionString)}");
+            throw new ArgumentException("ConnectionString is not a valid URI.");
 
         if (!primaryUri.Scheme.Equals("amqp", StringComparison.OrdinalIgnoreCase) &&
             !primaryUri.Scheme.Equals("amqps", StringComparison.OrdinalIgnoreCase))
@@ -645,7 +645,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         return _factory.CreateConnectionAsync(_endpoints);
     }
 
-    private async Task<IChannel> CreatePublisherChannelAsync(CancellationToken cancellationToken)
+    private Task<IChannel> CreatePublisherChannelAsync(CancellationToken cancellationToken)
     {
         if (_publisherConnection is null)
             throw new MessageBusException("Publisher connection must be initialized before creating a channel.");
@@ -655,10 +655,10 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
             var channelOptions = new CreateChannelOptions(
                 publisherConfirmationsEnabled: true,
                 publisherConfirmationTrackingEnabled: true);
-            return await _publisherConnection.CreateChannelAsync(channelOptions, cancellationToken).AnyContext();
+            return _publisherConnection.CreateChannelAsync(channelOptions, cancellationToken);
         }
 
-        return await _publisherConnection.CreateChannelAsync(cancellationToken: cancellationToken).AnyContext();
+        return _publisherConnection.CreateChannelAsync(cancellationToken: cancellationToken);
     }
 
     private void DetectServerVersion(IConnection connection)
@@ -828,13 +828,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
 
         string portSuffix = uri.IsDefaultPort ? "" : $":{uri.Port}";
         return $"{uri.Scheme}://***@{uri.Host}{portSuffix}{uri.AbsolutePath}";
-    }
-
-    private static string SanitizeUri(string connectionString)
-    {
-        return Uri.TryCreate(connectionString, UriKind.Absolute, out var uri)
-            ? SanitizeUri(uri)
-            : "***";
     }
 
     /// <summary>
