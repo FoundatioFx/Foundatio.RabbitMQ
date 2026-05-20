@@ -40,11 +40,11 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         ArgumentException.ThrowIfNullOrWhiteSpace(options?.ConnectionString, nameof(options.ConnectionString));
 
         if (!Uri.TryCreate(options.ConnectionString, UriKind.Absolute, out var primaryUri))
-            throw new ArgumentException($"ConnectionString is not a valid URI: {options.ConnectionString}");
+            throw new ArgumentException($"ConnectionString is not a valid URI: {SanitizeUri(options.ConnectionString)}");
 
         if (!primaryUri.Scheme.Equals("amqp", StringComparison.OrdinalIgnoreCase) &&
             !primaryUri.Scheme.Equals("amqps", StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException($"ConnectionString must use amqp:// or amqps:// scheme: {options.ConnectionString}");
+            throw new ArgumentException($"ConnectionString must use amqp:// or amqps:// scheme: {SanitizeUri(primaryUri)}");
 
         _isQuorumQueue = options.Arguments is not null && options.Arguments.TryGetValue("x-queue-type", out object? queueType) && queueType is string type && String.Equals(type, "quorum", StringComparison.OrdinalIgnoreCase);
 
@@ -357,6 +357,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         try
         {
             await EnsureTopicCreatedAsync(envelope.CancellationToken).AnyContext();
+            // PERF: ToArray() allocates; PublishMessageAsync takes byte[] until Foundatio base supports ReadOnlyMemory<byte>
             await PublishMessageAsync(envelope.Exchange, envelope.RoutingKey, envelope.Body.ToArray(), properties, envelope.CancellationToken).AnyContext();
             await subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
 
@@ -424,6 +425,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
                 }
             }
 
+            // PERF: Single lock serializes all publishes; with publisher confirms this limits throughput to 1 RTT.
+            // Consider channel pooling or batch publishing for high-throughput scenarios.
             using (await _lock.LockAsync(cancellationToken).AnyContext())
             {
                 if (_publisherChannel is not { IsOpen: true } channel)
@@ -442,6 +445,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
 
     protected virtual IMessage ConvertToMessage(BasicDeliverEventArgs envelope)
     {
+        // PERF: ToArray() allocates a copy; Message ctor requires byte[] until Foundatio supports ReadOnlyMemory<byte>
         var message = new Message(envelope.Body.ToArray(), DeserializeMessageBody)
         {
             Type = envelope.BasicProperties.Type,
@@ -483,17 +487,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
             _isPublisherBlocked = false;
             _publisherBlockedReason = null;
 
-            if (_options.PublisherConfirmsEnabled)
-            {
-                var channelOptions = new CreateChannelOptions(
-                    publisherConfirmationsEnabled: true,
-                    publisherConfirmationTrackingEnabled: true);
-                _publisherChannel = await _publisherConnection.CreateChannelAsync(channelOptions, cancellationToken).AnyContext();
-            }
-            else
-            {
-                _publisherChannel = await _publisherConnection.CreateChannelAsync(cancellationToken: cancellationToken).AnyContext();
-            }
+            _publisherChannel = await CreatePublisherChannelAsync(cancellationToken).AnyContext();
 
             // We first attempt to create "x-delayed-type". For this the rabbitmq_delayed_message_exchange plugin should be installed.
             // However, if the plugin is not installed this will throw an exception. In that case
@@ -521,17 +515,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
                 _isPublisherBlocked = false;
                 _publisherBlockedReason = null;
 
-                if (_options.PublisherConfirmsEnabled)
-                {
-                    var channelOptions = new CreateChannelOptions(
-                        publisherConfirmationsEnabled: true,
-                        publisherConfirmationTrackingEnabled: true);
-                    _publisherChannel = await _publisherConnection.CreateChannelAsync(channelOptions, cancellationToken).AnyContext();
-                }
-                else
-                {
-                    _publisherChannel = await _publisherConnection.CreateChannelAsync(cancellationToken: cancellationToken).AnyContext();
-                }
+                _publisherChannel = await CreatePublisherChannelAsync(cancellationToken).AnyContext();
                 await CreateRegularExchangeAsync(_publisherChannel).AnyContext();
             }
 
@@ -599,13 +583,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         return Task.CompletedTask;
     }
 
-    /// <summary>
-    /// Publish the message
-    /// </summary>
-    /// <param name="messageType"></param>
-    /// <param name="message"></param>
-    /// <param name="options">Message options</param>
-    /// <param name="cancellationToken"></param>
     protected override async Task PublishImplAsync(string messageType, object message, MessageOptions options, CancellationToken cancellationToken)
     {
         byte[] data = SerializeMessageBody(messageType, message);
@@ -648,7 +625,10 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
             // data back as signed (using BinaryReader#ReadInt64). You will see the value to be negative
             // and the data will be delivered immediately.
             basicProperties.Headers ??= new Dictionary<string, object?>();
-            basicProperties.Headers["x-delay"] = Convert.ToInt32(options.DeliveryDelay.Value.TotalMilliseconds);
+            double delayMs = options.DeliveryDelay.Value.TotalMilliseconds;
+            if (delayMs > Int32.MaxValue)
+                throw new ArgumentOutOfRangeException(nameof(options), $"DeliveryDelay ({options.DeliveryDelay.Value}) exceeds the maximum supported by RabbitMQ delayed exchange plugin ({Int32.MaxValue}ms).");
+            basicProperties.Headers["x-delay"] = (int)delayMs;
             _logger.LogTrace("Schedule delayed message: {MessageType} ({Delay}ms)", messageType, options.DeliveryDelay.Value.TotalMilliseconds);
         }
         else
@@ -660,14 +640,25 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         _logger.LogDebug("Done publishing type {MessageType} {MessageId}", messageType, basicProperties.MessageId);
     }
 
-    /// <summary>
-    /// Connect to a broker - RabbitMQ
-    /// </summary>
-    /// <returns></returns>
     private Task<IConnection> CreateConnectionAsync()
     {
-        // Use multiple endpoints for failover support
         return _factory.CreateConnectionAsync(_endpoints);
+    }
+
+    private async Task<IChannel> CreatePublisherChannelAsync(CancellationToken cancellationToken)
+    {
+        if (_publisherConnection is null)
+            throw new MessageBusException("Publisher connection must be initialized before creating a channel.");
+
+        if (_options.PublisherConfirmsEnabled)
+        {
+            var channelOptions = new CreateChannelOptions(
+                publisherConfirmationsEnabled: true,
+                publisherConfirmationTrackingEnabled: true);
+            return await _publisherConnection.CreateChannelAsync(channelOptions, cancellationToken).AnyContext();
+        }
+
+        return await _publisherConnection.CreateChannelAsync(cancellationToken: cancellationToken).AnyContext();
     }
 
     private void DetectServerVersion(IConnection connection)
@@ -830,6 +821,22 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         }
     }
 
+    private static string SanitizeUri(Uri uri)
+    {
+        if (String.IsNullOrEmpty(uri.UserInfo))
+            return uri.ToString();
+
+        string portSuffix = uri.IsDefaultPort ? "" : $":{uri.Port}";
+        return $"{uri.Scheme}://***@{uri.Host}{portSuffix}{uri.AbsolutePath}";
+    }
+
+    private static string SanitizeUri(string connectionString)
+    {
+        return Uri.TryCreate(connectionString, UriKind.Absolute, out var uri)
+            ? SanitizeUri(uri)
+            : "***";
+    }
+
     /// <summary>
     /// Parses a host string in format "hostname" or "hostname:port" into an AmqpTcpEndpoint.
     /// </summary>
@@ -839,13 +846,32 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
             return null;
 
         string trimmed = host.Trim();
+
+        // Handle IPv6 bracket notation: [::1] or [::1]:5672
+        if (trimmed.StartsWith('['))
+        {
+            int closeBracket = trimmed.IndexOf(']');
+            if (closeBracket < 0)
+                return new AmqpTcpEndpoint(trimmed, defaultPort);
+
+            string ipv6Host = trimmed[1..closeBracket];
+            if (closeBracket + 1 < trimmed.Length && trimmed[closeBracket + 1] == ':')
+            {
+                return Int32.TryParse(trimmed[(closeBracket + 2)..], out int port)
+                    ? new AmqpTcpEndpoint(ipv6Host, port)
+                    : new AmqpTcpEndpoint(ipv6Host, defaultPort);
+            }
+
+            return new AmqpTcpEndpoint(ipv6Host, defaultPort);
+        }
+
         int colonIndex = trimmed.LastIndexOf(':');
         if (colonIndex < 0)
             return new AmqpTcpEndpoint(trimmed, defaultPort);
 
         string hostname = trimmed[..colonIndex];
-        return Int32.TryParse(trimmed[(colonIndex + 1)..], out int port)
-            ? new AmqpTcpEndpoint(hostname, port)
+        return Int32.TryParse(trimmed[(colonIndex + 1)..], out int parsedPort)
+            ? new AmqpTcpEndpoint(hostname, parsedPort)
             : new AmqpTcpEndpoint(trimmed, defaultPort);
     }
 
