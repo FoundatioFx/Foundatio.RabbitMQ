@@ -19,6 +19,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
     private const string XDeliveryCountHeader = "x-delivery-count";
     private const string XOriginalMessageIdHeader = "x-original-message-id";
     private static readonly Version _delayedExchangePluginIncompatibleVersion = new(4, 3);
+    private static readonly Version _globalQosRemovedVersion = new(4, 3);
 
     private readonly AsyncLock _lock = new();
     private readonly AsyncManualResetEvent _publisherReady = new(true);
@@ -147,12 +148,12 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
 #pragma warning disable CS0618 // GlobalQos is obsolete but we still need to read it for backward compatibility
                 bool useGlobalQos = _options.GlobalQos;
 #pragma warning restore CS0618
-                if (useGlobalQos && _serverVersion is not null && _serverVersion >= _delayedExchangePluginIncompatibleVersion)
+                if (useGlobalQos && _serverVersion is not null && _serverVersion >= _globalQosRemovedVersion)
                 {
                     _logger.LogWarning("GlobalQos is not supported on RabbitMQ {ServerVersion}. Falling back to per-channel prefetch (global: false). Remove the GlobalQos option to suppress this warning", _serverVersion);
                     useGlobalQos = false;
                 }
-                else if (useGlobalQos)
+                else if (useGlobalQos && _serverVersion is not null)
                 {
                     _logger.LogWarning("GlobalQos is deprecated in RabbitMQ 4.3+ and will be removed in a future version. Use per-channel prefetch instead");
                 }
@@ -604,7 +605,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         // if the RabbitMQ plugin is not available, then use the base class delay mechanism
         if (_delayedExchangePluginEnabled is false && options.DeliveryDelay.HasValue && options.DeliveryDelay.Value > TimeSpan.Zero)
         {
-            _logger.LogDebug("Delayed message will be scheduled in-memory (broker-side delayed exchange unavailable): {MessageType} ({Delay}ms)", messageType, options.DeliveryDelay.Value.TotalMilliseconds);
+            _logger.LogTrace("Delayed message will be scheduled in-memory (broker-side delayed exchange unavailable): {MessageType} ({Delay}ms)", messageType, options.DeliveryDelay.Value.TotalMilliseconds);
             var mappedType = GetMappedMessageType(messageType);
             if (mappedType is null)
                 throw new MessageBusException($"Unable to resolve CLR type for delayed message: {messageType}");
