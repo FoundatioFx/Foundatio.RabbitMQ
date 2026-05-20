@@ -622,9 +622,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         // RabbitMQ only supports delayed messages with a third party plugin called "rabbitmq_delayed_message_exchange"
         if (_delayedExchangePluginEnabled is true && options.DeliveryDelay.HasValue && options.DeliveryDelay.Value > TimeSpan.Zero)
         {
-            // It's necessary to typecast long to int because RabbitMQ on the consumer side is reading the
-            // data back as signed (using BinaryReader#ReadInt64). You will see the value to be negative
-            // and the data will be delivered immediately.
+            // RabbitMQ's x-delay header must be a 32-bit signed int; the broker reads it as Int32
+            // and negative values cause immediate delivery.
             basicProperties.Headers ??= new Dictionary<string, object?>();
             double delayMs = options.DeliveryDelay.Value.TotalMilliseconds;
             if (delayMs > Int32.MaxValue)
