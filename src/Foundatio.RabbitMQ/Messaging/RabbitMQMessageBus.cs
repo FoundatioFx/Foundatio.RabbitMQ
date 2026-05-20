@@ -26,8 +26,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
     private readonly List<AmqpTcpEndpoint> _endpoints;
     private IConnection? _publisherConnection;
     private IConnection? _subscriberConnection;
-    private IChannel? _publisherChannel;
-    private IChannel? _subscriberChannel;
+    private volatile IChannel? _publisherChannel;
+    private volatile IChannel? _subscriberChannel;
     private AsyncEventingBasicConsumer? _consumer;
     private bool? _delayedExchangePluginEnabled;
     private Version? _serverVersion;
@@ -94,10 +94,11 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
     protected override async Task CleanupAsync()
     {
         _factory.AutomaticRecoveryEnabled = false;
-        _publisherReady.Set();
 
         await ClosePublisherConnectionAsync().AnyContext();
         await CloseSubscriberConnectionAsync().AnyContext();
+
+        _publisherReady.Set();
     }
 
     protected override async Task EnsureTopicSubscriptionAsync(CancellationToken cancellationToken)
@@ -865,7 +866,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         string hostname = trimmed[..colonIndex];
         return Int32.TryParse(trimmed[(colonIndex + 1)..], out int parsedPort)
             ? new AmqpTcpEndpoint(hostname, parsedPort)
-            : new AmqpTcpEndpoint(trimmed, defaultPort);
+            : new AmqpTcpEndpoint(hostname, defaultPort);
     }
 
     private void RegisterPublisherConnectionEventHandlers()
