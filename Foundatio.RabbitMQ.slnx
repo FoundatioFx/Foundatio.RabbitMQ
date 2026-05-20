@@ -13,6 +13,10 @@
   </Folder>
   <Folder Name="/Tests/">
     <Project Path="tests/Foundatio.RabbitMQ.Tests/Foundatio.RabbitMQ.Tests.csproj" />
+    <Project Path="tests/Foundatio.RabbitMQ.AppHost/Foundatio.RabbitMQ.AppHost.csproj" />
+  </Folder>
+  <Folder Name="/Chaos Testing/">
+    <Project Path="chaos-testing/Foundatio.RabbitMQ.ChaosTests/Foundatio.RabbitMQ.ChaosTests.csproj" />
   </Folder>
   <Project Path="src/Foundatio.RabbitMQ/Foundatio.RabbitMQ.csproj" />
 </Solution>

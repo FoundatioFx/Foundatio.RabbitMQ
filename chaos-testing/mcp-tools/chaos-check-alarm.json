@@ -1,0 +1,22 @@
+{
+  "name": "chaos_check_alarm",
+  "description": "Check if a RabbitMQ chaos node has an active disk alarm. Returns true if the node is currently in a disk alarm state (publishes blocked), false otherwise.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "node": {
+        "type": "string",
+        "description": "The chaos node name (chaos-1, chaos-2, or chaos-3)",
+        "enum": ["chaos-1", "chaos-2", "chaos-3"]
+      }
+    },
+    "required": ["node"]
+  },
+  "annotations": {
+    "title": "Check Disk Alarm Status",
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "readOnlyHint": true,
+    "openWorldHint": false
+  }
+}

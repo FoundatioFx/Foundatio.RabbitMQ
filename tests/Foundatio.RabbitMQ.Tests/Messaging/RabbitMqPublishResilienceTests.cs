@@ -7,7 +7,9 @@ using Xunit;
 
 namespace Foundatio.RabbitMQ.Tests.Messaging;
 
-public class RabbitMqPublishResilienceTests(ITestOutputHelper output) : RabbitMqMessageBusTestBase("amqp://localhost:5672", output)
+[Collection("Aspire")]
+public class RabbitMqPublishResilienceTests(AspireFixture fixture, ITestOutputHelper output)
+    : RabbitMqMessageBusTestBase(fixture.MessagingConnectionString, output)
 {
     [Fact]
     public async Task PublishAsync_WithRecoveryTimeoutDisabled_FailsImmediatelyOnConnectionDrop()
