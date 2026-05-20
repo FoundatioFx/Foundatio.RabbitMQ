@@ -862,6 +862,10 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         if (colonIndex < 0)
             return new AmqpTcpEndpoint(trimmed, defaultPort);
 
+        // Multiple colons without brackets indicates an unbracketed IPv6 address — treat as bare hostname
+        if (trimmed.IndexOf(':') != colonIndex)
+            return new AmqpTcpEndpoint(trimmed, defaultPort);
+
         string hostname = trimmed[..colonIndex];
         return Int32.TryParse(trimmed[(colonIndex + 1)..], out int parsedPort)
             ? new AmqpTcpEndpoint(hostname, parsedPort)
