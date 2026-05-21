@@ -125,6 +125,10 @@ public class ChaosTestHelper
         var error = await process.StandardError.ReadToEndAsync(cancellationToken);
         await process.WaitForExitAsync(cancellationToken);
 
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException(
+                $"docker {args} failed (exit code {process.ExitCode}): {error.Trim()}");
+
         return output;
     }
 }

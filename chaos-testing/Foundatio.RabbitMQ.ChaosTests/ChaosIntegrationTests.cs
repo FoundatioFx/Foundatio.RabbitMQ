@@ -18,7 +18,8 @@ public class ChaosFixture : IAsyncLifetime
     private DistributedApplication? _app;
 
     public DistributedApplication App => _app ?? throw new InvalidOperationException("AppHost not initialized");
-    public ChaosTestHelper Chaos => new(App);
+    private ChaosTestHelper? _chaos;
+    public ChaosTestHelper Chaos => _chaos ??= new(App);
 
     public async ValueTask InitializeAsync()
     {
@@ -69,20 +70,25 @@ public class ChaosIntegrationTests
     [Fact]
     public async Task SetDiskFreeLimit_WhenSetToUnreachableValue_TriggersAndClearsAlarm()
     {
+        // Arrange
         var chaos = _fixture.Chaos;
 
+        // Act - trigger alarm
         _output.WriteLine("=== Triggering disk alarm on chaos-1 ===");
         await chaos.FillDiskAsync("chaos-1");
         await chaos.WaitForAlarmActiveAsync("chaos-1", TimeSpan.FromSeconds(30));
 
+        // Assert - alarm is active
         var hasAlarm = await chaos.HasDiskAlarmAsync("chaos-1");
         _output.WriteLine($"Alarm active: {hasAlarm}");
         Assert.True(hasAlarm, "Expected disk alarm to be active after setting limit to 999GB");
 
+        // Act - clear alarm
         _output.WriteLine("=== Clearing disk alarm on chaos-1 ===");
         await chaos.ClearDiskAsync("chaos-1");
         await chaos.WaitForAlarmClearedAsync("chaos-1", TimeSpan.FromSeconds(30));
 
+        // Assert - alarm is cleared
         hasAlarm = await chaos.HasDiskAlarmAsync("chaos-1");
         _output.WriteLine($"Alarm cleared: {!hasAlarm}");
         Assert.False(hasAlarm, "Expected disk alarm to clear after resetting limit to 10MB");
@@ -91,6 +97,7 @@ public class ChaosIntegrationTests
     [Fact]
     public async Task PublishAsync_DuringDiskAlarm_WithoutConfirms_MaySucceedSilently()
     {
+        // Arrange
         var chaos = _fixture.Chaos;
         var connectionString = chaos.GetConnectionString("chaos-1");
         _output.WriteLine($"Connection: {connectionString}");
@@ -109,6 +116,7 @@ public class ChaosIntegrationTests
         _output.WriteLine("Disk alarm active, waiting for broker blocked notification to propagate...");
         await Task.Delay(TimeSpan.FromSeconds(5));
 
+        // Act
         _output.WriteLine("Attempting publish during alarm (fire-and-forget mode)...");
         bool publishThrew = false;
         try
@@ -126,15 +134,18 @@ public class ChaosIntegrationTests
         {
             await chaos.ClearDiskAsync("chaos-1");
             await chaos.WaitForAlarmClearedAsync("chaos-1", TimeSpan.FromSeconds(30));
-            _output.WriteLine($"Disk alarm cleared. Publish threw: {publishThrew}");
-            _output.WriteLine("NOTE: Without publisher confirms, disk alarms may not block publishes immediately.");
-            _output.WriteLine("Use PublisherConfirmsEnabled=true for guaranteed delivery detection.");
         }
+
+        // Assert
+        _output.WriteLine($"Disk alarm cleared. Publish threw: {publishThrew}");
+        _output.WriteLine("NOTE: Without publisher confirms, disk alarms may not block publishes immediately.");
+        _output.WriteLine("Use PublisherConfirmsEnabled=true for guaranteed delivery detection.");
     }
 
     [Fact]
     public async Task PublishAsync_AfterNodeRestart_RecoversAutomatically()
     {
+        // Arrange
         var chaos = _fixture.Chaos;
         var connectionString = chaos.GetConnectionString("chaos-1");
         _output.WriteLine($"Connection: {connectionString}");
@@ -148,6 +159,7 @@ public class ChaosIntegrationTests
         await messageBus.PublishAsync(new TestMessage { Data = "before kill" });
         _output.WriteLine("Pre-kill publish succeeded");
 
+        // Act
         _output.WriteLine("Killing chaos-1...");
         await chaos.StopNodeAsync("chaos-1");
         _output.WriteLine("Node killed, waiting 2s...");
@@ -162,12 +174,15 @@ public class ChaosIntegrationTests
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await messageBus.PublishAsync(new TestMessage { Data = "after restart" }, cancellationToken: cts.Token);
         _output.WriteLine("Post-restart publish SUCCEEDED - recovery gate worked");
+
+        // Assert
         Assert.False(cts.IsCancellationRequested, "Publish should complete before timeout");
     }
 
     [Fact]
     public async Task PublishAsync_NodeDown_RecoveryTimeoutExpires_ThrowsMessageBusException()
     {
+        // Arrange
         var chaos = _fixture.Chaos;
         var connectionString = chaos.GetConnectionString("chaos-1");
         _output.WriteLine($"Connection: {connectionString}");
@@ -184,6 +199,7 @@ public class ChaosIntegrationTests
         await chaos.StopNodeAsync("chaos-1");
         await Task.Delay(TimeSpan.FromSeconds(2));
 
+        // Act & Assert
         _output.WriteLine("Attempting publish with 3s recovery timeout (node is down)...");
         try
         {
@@ -208,6 +224,7 @@ public class ChaosIntegrationTests
     [Fact]
     public async Task SubscribeAsync_ReceivesMessages_AfterNodeRestart()
     {
+        // Arrange
         var chaos = _fixture.Chaos;
         var connectionString = chaos.GetConnectionString("chaos-1");
         _output.WriteLine($"Connection: {connectionString}");
@@ -233,10 +250,10 @@ public class ChaosIntegrationTests
         _output.WriteLine("Publishing pre-restart message...");
         await messageBus.PublishAsync(new TestMessage { Data = "before" });
         await Task.Delay(TimeSpan.FromSeconds(2));
-
         Assert.Contains("before", received);
         _output.WriteLine($"Pre-restart messages received: {received.Count}");
 
+        // Act
         _output.WriteLine("Killing chaos-1...");
         await chaos.StopNodeAsync("chaos-1");
         await Task.Delay(TimeSpan.FromSeconds(2));
@@ -251,14 +268,16 @@ public class ChaosIntegrationTests
         await messageBus.PublishAsync(new TestMessage { Data = "after" }, cancellationToken: cts.Token);
         await Task.Delay(TimeSpan.FromSeconds(5));
 
+        // Assert
         _output.WriteLine($"Total messages received: {received.Count}");
         Assert.Contains("after", received);
         _output.WriteLine("Subscriber successfully recovered and received post-restart message");
     }
 
     [Fact]
-    public async Task PublishAsync_WithPublisherConfirms_DuringDiskAlarm_Fails()
+    public async Task PublishAsync_WithPublisherConfirms_DuringDiskAlarm_FailsOrTimesOut()
     {
+        // Arrange
         var chaos = _fixture.Chaos;
         var connectionString = chaos.GetConnectionString("chaos-1");
         _output.WriteLine($"Connection: {connectionString}");
@@ -278,6 +297,8 @@ public class ChaosIntegrationTests
         _output.WriteLine("Alarm active, waiting for blocked notification...");
         await Task.Delay(TimeSpan.FromSeconds(5));
 
+        // Act
+        bool publishFailed = false;
         try
         {
             _output.WriteLine("Publishing with confirms during alarm (5s timeout)...");
@@ -288,11 +309,13 @@ public class ChaosIntegrationTests
         }
         catch (MessageBusException ex)
         {
+            publishFailed = true;
             _output.WriteLine($"EXPECTED: MessageBusException: {ex.Message}");
             Assert.Contains("blocked", ex.Message, StringComparison.OrdinalIgnoreCase);
         }
         catch (OperationCanceledException)
         {
+            publishFailed = true;
             _output.WriteLine("EXPECTED: Publish timed out (confirms blocked during disk alarm)");
         }
         finally
@@ -301,24 +324,33 @@ public class ChaosIntegrationTests
             await chaos.WaitForAlarmClearedAsync("chaos-1", TimeSpan.FromSeconds(30));
             _output.WriteLine("Alarm cleared");
         }
+
+        // Assert
+        Assert.True(publishFailed,
+            "Publisher confirms should fail or timeout during a disk alarm. " +
+            "If this assertion fails, the broker did not propagate the blocked notification in time.");
     }
 
     [Fact]
-    public async Task GetClusterStatus_WhenAllNodesHealthy_ReportsRunningNodes()
+    public async Task GetClusterStatus_WhenNodeHealthy_ReportsNodeRunning()
     {
+        // Arrange
         var chaos = _fixture.Chaos;
+
+        // Act
         var status = await chaos.GetClusterStatusAsync("chaos-1");
         _output.WriteLine($"Cluster status JSON length: {status.Length}");
         _output.WriteLine($"Cluster status: {status[..Math.Min(500, status.Length)]}");
 
+        // Assert
         Assert.NotEmpty(status);
         Assert.Contains("running_nodes", status);
-        Assert.Contains("rabbit@chaos-1", status);
     }
 
     [Fact]
-    public async Task CompetingConsumers_DistributeMessages_AcrossMultipleSubscribers()
+    public async Task CompetingConsumers_WhenMultipleSubscribersActive_DistributesMessagesEvenly()
     {
+        // Arrange
         var chaos = _fixture.Chaos;
         var connectionString = chaos.GetConnectionString("chaos-1");
         _output.WriteLine($"Connection: {connectionString}");
@@ -366,12 +398,14 @@ public class ChaosIntegrationTests
             .Topic(topic)
             .LoggerFactory(_loggerFactory));
 
+        // Act
         _output.WriteLine("Publishing 30 messages to competing consumers...");
         for (int i = 0; i < 30; i++)
             await publisher.PublishAsync(new TestMessage { Data = $"msg-{i}" });
 
         await Task.Delay(TimeSpan.FromSeconds(5));
 
+        // Assert
         int total = received1.Count + received2.Count + received3.Count;
         _output.WriteLine($"Consumer 1 received: {received1.Count}");
         _output.WriteLine($"Consumer 2 received: {received2.Count}");
@@ -386,14 +420,15 @@ public class ChaosIntegrationTests
     }
 
     [Fact]
-    public async Task RollingUpgrade_ConsumersResume_WithoutProcessRestart()
+    public async Task SubscribeAsync_DuringRollingUpgrade_ResumesWithoutProcessRestart()
     {
+        // Arrange
         var chaos = _fixture.Chaos;
         var connectionString = chaos.GetConnectionString("chaos-1");
         _output.WriteLine($"Connection: {connectionString}");
 
         var logCapture = new LogCapture();
-        var logFactory = LoggerFactory.Create(builder =>
+        using var logFactory = LoggerFactory.Create(builder =>
         {
             builder.SetMinimumLevel(LogLevel.Trace);
             builder.AddProvider(new XUnitLoggerProvider(_output));
@@ -426,6 +461,7 @@ public class ChaosIntegrationTests
         Assert.Equal(5, received.Count);
         _output.WriteLine($"Phase 1 complete: {received.Count} messages received");
 
+        // Act
         _output.WriteLine("=== Phase 2: Simulate rolling upgrade (kill node) ===");
         await chaos.StopNodeAsync("chaos-1");
         _output.WriteLine("Node killed (simulating rolling upgrade restart)");
@@ -442,14 +478,13 @@ public class ChaosIntegrationTests
             await messageBus.PublishAsync(new TestMessage { Data = $"post-restart-{i}" }, cancellationToken: cts.Token);
         await Task.Delay(TimeSpan.FromSeconds(5));
 
+        // Assert
         var postRestartCount = received.Count(m => m.StartsWith("post-restart-"));
         _output.WriteLine($"Post-restart messages received: {postRestartCount}/5");
         Assert.Equal(5, postRestartCount);
 
-        _output.WriteLine("=== Recovery Audit Trail ===");
         var recoveryLogs = logCapture.GetMessages();
         _output.WriteLine($"Total captured log messages: {recoveryLogs.Count}");
-
         Assert.Contains(recoveryLogs, m => m.Contains("Publisher connection lost"));
         Assert.Contains(recoveryLogs, m => m.Contains("Publisher connection recovery succeeded"));
         Assert.Contains(recoveryLogs, m => m.Contains("Subscriber connection recovery") || m.Contains("Subscriber connection recovering"));
@@ -457,8 +492,9 @@ public class ChaosIntegrationTests
     }
 
     [Fact]
-    public async Task MultiEndpointFailover_ConnectsToAlternateHost()
+    public async Task PublishAsync_WhenPrimaryHostDown_ConnectsToAlternateEndpoint()
     {
+        // Arrange
         var chaos = _fixture.Chaos;
         var endpoint1 = _fixture.App.GetEndpoint("chaos-1", "amqp");
         var endpoint2 = _fixture.App.GetEndpoint("chaos-2", "amqp");
@@ -466,7 +502,7 @@ public class ChaosIntegrationTests
         _output.WriteLine($"Endpoint 2 (chaos-2): {endpoint2.Host}:{endpoint2.Port}");
 
         var logCapture = new LogCapture();
-        var logFactory = LoggerFactory.Create(builder =>
+        using var logFactory = LoggerFactory.Create(builder =>
         {
             builder.SetMinimumLevel(LogLevel.Trace);
             builder.AddProvider(new XUnitLoggerProvider(_output));
@@ -477,6 +513,7 @@ public class ChaosIntegrationTests
         await chaos.StopNodeAsync("chaos-1");
         await Task.Delay(TimeSpan.FromSeconds(3));
 
+        // Act & Assert
         _output.WriteLine("Connecting with Hosts=[chaos-1, chaos-2] (chaos-1 is down)...");
         try
         {
@@ -505,14 +542,15 @@ public class ChaosIntegrationTests
     }
 
     [Fact]
-    public async Task RecoveryAuditTrail_LogsFullRecoverySequence()
+    public async Task PublishAsync_AfterNodeKillAndRestart_LogsFullRecoverySequence()
     {
+        // Arrange
         var chaos = _fixture.Chaos;
         var connectionString = chaos.GetConnectionString("chaos-1");
         _output.WriteLine($"Connection: {connectionString}");
 
         var logCapture = new LogCapture();
-        var logFactory = LoggerFactory.Create(builder =>
+        using var logFactory = LoggerFactory.Create(builder =>
         {
             builder.SetMinimumLevel(LogLevel.Trace);
             builder.AddProvider(new XUnitLoggerProvider(_output));
@@ -527,6 +565,7 @@ public class ChaosIntegrationTests
         _output.WriteLine("Warmup publish...");
         await messageBus.PublishAsync(new TestMessage { Data = "warmup" });
 
+        // Act
         _output.WriteLine("Killing node to trigger recovery sequence...");
         await chaos.StopNodeAsync("chaos-1");
         await Task.Delay(TimeSpan.FromSeconds(3));
@@ -539,6 +578,7 @@ public class ChaosIntegrationTests
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await messageBus.PublishAsync(new TestMessage { Data = "after recovery" }, cancellationToken: cts.Token);
 
+        // Assert
         _output.WriteLine("=== Verifying Recovery Audit Trail (OUT-12608 requirement) ===");
         var logs = logCapture.GetMessages();
 
@@ -553,14 +593,13 @@ public class ChaosIntegrationTests
         Assert.True(hasShutdown, "Missing: shutdown event in logs");
         Assert.True(hasRecoveryAttempt, "Missing: recovery attempt/error in logs");
         Assert.True(hasRecoverySuccess, "Missing: recovery succeeded in logs");
-
         _output.WriteLine("Full recovery audit trail confirmed (shutdown -> attempt -> success)");
-        _output.WriteLine("This proves OUT-12608 requirement: 'recovery failures are provable with targeted log capture'");
     }
 
     [Fact]
-    public async Task ConcurrentPublishers_DuringNodeKill_AllRecoverOrFailGracefully()
+    public async Task PublishAsync_ConcurrentDuringNodeKill_AllRecoverOrFailGracefully()
     {
+        // Arrange
         var chaos = _fixture.Chaos;
         var connectionString = chaos.GetConnectionString("chaos-1");
         _output.WriteLine($"Connection: {connectionString}");
@@ -577,6 +616,7 @@ public class ChaosIntegrationTests
         int failedGracefully = 0;
         int unexpected = 0;
 
+        // Act
         _output.WriteLine("Launching 20 concurrent publishers, killing node mid-flight...");
         var killTask = Task.Run(async () =>
         {
@@ -615,6 +655,7 @@ public class ChaosIntegrationTests
         await Task.WhenAll(publishTasks.Append(killTask));
         await Task.Delay(TimeSpan.FromSeconds(15));
 
+        // Assert
         _output.WriteLine($"Succeeded: {succeeded}, Failed gracefully: {failedGracefully}, Unexpected: {unexpected}");
         Assert.Equal(0, unexpected);
         Assert.True(succeeded + failedGracefully == 20, "All 20 publishes should either succeed or fail gracefully");
@@ -623,8 +664,9 @@ public class ChaosIntegrationTests
     }
 
     [Fact]
-    public async Task DoubleFault_DiskAlarmThenNodeKill_SystemRecovers()
+    public async Task PublishAsync_DuringDiskAlarmAndNodeKill_RecoversAfterRestart()
     {
+        // Arrange
         var chaos = _fixture.Chaos;
         var connectionString = chaos.GetConnectionString("chaos-1");
         _output.WriteLine($"Connection: {connectionString}");
@@ -637,6 +679,7 @@ public class ChaosIntegrationTests
         _output.WriteLine("Warmup...");
         await messageBus.PublishAsync(new TestMessage { Data = "warmup" });
 
+        // Act
         _output.WriteLine("=== Fault 1: Trigger disk alarm ===");
         await chaos.FillDiskAsync("chaos-1");
         await chaos.WaitForAlarmActiveAsync("chaos-1", TimeSpan.FromSeconds(30));
@@ -647,13 +690,14 @@ public class ChaosIntegrationTests
         _output.WriteLine("Node killed during disk alarm - double fault in progress");
         await Task.Delay(TimeSpan.FromSeconds(3));
 
-        _output.WriteLine("=== Recovery: Restart node (alarm will be cleared on restart) ===");
+        _output.WriteLine("=== Recovery: Restart node ===");
         await chaos.StartNodeAsync("chaos-1");
         await Task.Delay(TimeSpan.FromSeconds(15));
 
         await chaos.ClearDiskAsync("chaos-1");
         await chaos.WaitForAlarmClearedAsync("chaos-1", TimeSpan.FromSeconds(30));
 
+        // Assert
         _output.WriteLine("=== Verify: System recovered from double fault ===");
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await messageBus.PublishAsync(new TestMessage { Data = "after double fault" }, cancellationToken: cts.Token);
@@ -662,14 +706,15 @@ public class ChaosIntegrationTests
     }
 
     [Fact]
-    public async Task RapidConnectionFlapping_SystemRemainsStable()
+    public async Task PublishAsync_AfterRapidConnectionFlapping_SystemRemainsStable()
     {
+        // Arrange
         var chaos = _fixture.Chaos;
         var connectionString = chaos.GetConnectionString("chaos-1");
         _output.WriteLine($"Connection: {connectionString}");
 
         var logCapture = new LogCapture();
-        var logFactory = LoggerFactory.Create(builder =>
+        using var logFactory = LoggerFactory.Create(builder =>
         {
             builder.SetMinimumLevel(LogLevel.Trace);
             builder.AddProvider(new XUnitLoggerProvider(_output));
@@ -684,6 +729,7 @@ public class ChaosIntegrationTests
         _output.WriteLine("Warmup...");
         await messageBus.PublishAsync(new TestMessage { Data = "warmup" });
 
+        // Act
         _output.WriteLine("=== Rapid flapping: kill/restart 3 times in quick succession ===");
         for (int i = 1; i <= 3; i++)
         {
@@ -703,6 +749,7 @@ public class ChaosIntegrationTests
         await messageBus.PublishAsync(new TestMessage { Data = "after flapping" }, cancellationToken: cts.Token);
         _output.WriteLine("Publish succeeded after rapid connection flapping!");
 
+        // Assert
         var logs = logCapture.GetMessages();
         int recoveryCount = logs.Count(m => m.Contains("recovery succeeded"));
         _output.WriteLine($"Recovery succeeded events: {recoveryCount}");
@@ -710,8 +757,9 @@ public class ChaosIntegrationTests
     }
 
     [Fact]
-    public async Task HighVolumeBurst_AfterRecovery_AllMessagesDelivered()
+    public async Task PublishAsync_HighVolumeBurstAfterRecovery_AllMessagesDelivered()
     {
+        // Arrange
         var chaos = _fixture.Chaos;
         var connectionString = chaos.GetConnectionString("chaos-1");
         _output.WriteLine($"Connection: {connectionString}");
@@ -736,6 +784,7 @@ public class ChaosIntegrationTests
         await Task.Delay(TimeSpan.FromSeconds(2));
         Assert.Contains("baseline", received);
 
+        // Act
         _output.WriteLine("Kill and restart node...");
         await chaos.StopNodeAsync("chaos-1");
         await Task.Delay(TimeSpan.FromSeconds(2));
@@ -750,6 +799,7 @@ public class ChaosIntegrationTests
         _output.WriteLine("Waiting for all messages to be delivered...");
         await Task.Delay(TimeSpan.FromSeconds(10));
 
+        // Assert
         int burstReceived = received.Count(m => m.StartsWith("burst-"));
         _output.WriteLine($"Burst messages received: {burstReceived}/50");
         Assert.Equal(50, burstReceived);
@@ -757,8 +807,9 @@ public class ChaosIntegrationTests
     }
 
     [Fact]
-    public async Task SlowConsumer_NodeKillDuringProcessing_MessageNotLost()
+    public async Task SubscribeAsync_NodeKillDuringSlowProcessing_SubscriptionSurvives()
     {
+        // Arrange
         var chaos = _fixture.Chaos;
         var connectionString = chaos.GetConnectionString("chaos-1");
         _output.WriteLine($"Connection: {connectionString}");
@@ -789,11 +840,12 @@ public class ChaosIntegrationTests
             _output.WriteLine($"Handler completed: {msg.Data}");
         });
 
-        _output.WriteLine("Publishing a slow message and a fast message...");
+        _output.WriteLine("Publishing a fast message to verify subscription is active...");
         await messageBus.PublishAsync(new TestMessage { Data = "fast-before" });
         await Task.Delay(TimeSpan.FromSeconds(1));
         Assert.Contains("fast-before", received);
 
+        // Act
         _output.WriteLine("Publishing slow message then killing node during processing...");
         await messageBus.PublishAsync(new TestMessage { Data = "slow-message" });
         await Task.Delay(TimeSpan.FromMilliseconds(500));
@@ -811,6 +863,7 @@ public class ChaosIntegrationTests
         await messageBus.PublishAsync(new TestMessage { Data = "post-recovery" }, cancellationToken: cts.Token);
         await Task.Delay(TimeSpan.FromSeconds(5));
 
+        // Assert
         _output.WriteLine($"Total messages received: {received.Count}");
         _output.WriteLine($"Messages: [{string.Join(", ", received)}]");
         Assert.Contains("post-recovery", received);

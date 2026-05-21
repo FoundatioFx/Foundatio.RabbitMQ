@@ -11,14 +11,12 @@ var messagingDelayed = builder.AddContainer("messaging-delayed", "foundatiorabbi
     .WithEndpoint(targetPort: 5672, name: "amqp", scheme: "tcp")
     .WithEndpoint(targetPort: 15672, name: "management", scheme: "http");
 
-// --- Chaos Testing Resources (3-node constrained cluster) ---
+// --- Chaos Testing Resources (independent nodes for resilience testing) ---
 
 var chaosNode1 = builder.AddContainer("chaos-1", "rabbitmq", "4.2.2-management")
     .WithContainerRuntimeArgs("--memory=384m")
     .WithEnvironment("RABBITMQ_DEFAULT_USER", "guest")
     .WithEnvironment("RABBITMQ_DEFAULT_PASS", "guest")
-    .WithEnvironment("RABBITMQ_ERLANG_COOKIE", "chaos-testing-cookie")
-    .WithEnvironment("RABBITMQ_NODENAME", "rabbit@chaos-1")
     .WithBindMount("../../chaos-testing/config/chaos-1.conf", "/etc/rabbitmq/conf.d/99-limits.conf", isReadOnly: true)
     .WithEndpoint(targetPort: 5672, name: "amqp", scheme: "tcp")
     .WithEndpoint(targetPort: 15672, name: "management", scheme: "http");
@@ -27,8 +25,6 @@ var chaosNode2 = builder.AddContainer("chaos-2", "rabbitmq", "4.2.2-management")
     .WithContainerRuntimeArgs("--memory=448m")
     .WithEnvironment("RABBITMQ_DEFAULT_USER", "guest")
     .WithEnvironment("RABBITMQ_DEFAULT_PASS", "guest")
-    .WithEnvironment("RABBITMQ_ERLANG_COOKIE", "chaos-testing-cookie")
-    .WithEnvironment("RABBITMQ_NODENAME", "rabbit@chaos-2")
     .WithBindMount("../../chaos-testing/config/chaos-2.conf", "/etc/rabbitmq/conf.d/99-limits.conf", isReadOnly: true)
     .WithEndpoint(targetPort: 5672, name: "amqp", scheme: "tcp")
     .WithEndpoint(targetPort: 15672, name: "management", scheme: "http")
@@ -38,8 +34,6 @@ var chaosNode3 = builder.AddContainer("chaos-3", "rabbitmq", "4.2.2-management")
     .WithContainerRuntimeArgs("--memory=512m")
     .WithEnvironment("RABBITMQ_DEFAULT_USER", "guest")
     .WithEnvironment("RABBITMQ_DEFAULT_PASS", "guest")
-    .WithEnvironment("RABBITMQ_ERLANG_COOKIE", "chaos-testing-cookie")
-    .WithEnvironment("RABBITMQ_NODENAME", "rabbit@chaos-3")
     .WithBindMount("../../chaos-testing/config/chaos-3.conf", "/etc/rabbitmq/conf.d/99-limits.conf", isReadOnly: true)
     .WithEndpoint(targetPort: 5672, name: "amqp", scheme: "tcp")
     .WithEndpoint(targetPort: 15672, name: "management", scheme: "http")
