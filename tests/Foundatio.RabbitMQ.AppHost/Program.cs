@@ -2,16 +2,12 @@ using Projects;
 
 var builder = DistributedApplication.CreateBuilder(args);
 
-// --- Standard Integration Test Resources ---
-
 var messaging = builder.AddRabbitMQ("messaging")
     .WithManagementPlugin();
 
 var messagingDelayed = builder.AddContainer("messaging-delayed", "foundatiorabbitmq-rabbitmq-delayed", "latest")
     .WithEndpoint(targetPort: 5672, name: "amqp", scheme: "tcp")
     .WithEndpoint(targetPort: 15672, name: "management", scheme: "http");
-
-// --- Chaos Testing Resources (independent nodes for resilience testing) ---
 
 var chaosNode1 = builder.AddContainer("chaos-1", "rabbitmq", "4.2.2-management")
     .WithContainerRuntimeArgs("--memory=384m")
@@ -38,8 +34,6 @@ var chaosNode3 = builder.AddContainer("chaos-3", "rabbitmq", "4.2.2-management")
     .WithEndpoint(targetPort: 5672, name: "amqp", scheme: "tcp")
     .WithEndpoint(targetPort: 15672, name: "management", scheme: "http")
     .WaitFor(chaosNode1);
-
-// --- Sample App Resources ---
 
 builder.AddProject<Foundatio_RabbitMQ_Publish>("publisher")
     .WithReference(messaging)

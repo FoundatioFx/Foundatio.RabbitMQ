@@ -17,7 +17,7 @@ public class ChaosTestHelper
         _app = app;
     }
 
-    public async Task FillDiskAsync(string resourceName, int sizeMB = 0, CancellationToken cancellationToken = default)
+    public async Task FillDiskAsync(string resourceName, CancellationToken cancellationToken = default)
     {
         var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
         await DockerExecAsync(containerId,
@@ -35,13 +35,13 @@ public class ChaosTestHelper
 
     public async Task StopNodeAsync(string resourceName, CancellationToken cancellationToken = default)
     {
-        var containerId = await GetContainerIdAsync(resourceName, includeExited: false, cancellationToken);
+        var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
         await RunDockerCommandAsync($"kill {containerId}", cancellationToken);
     }
 
     public async Task StartNodeAsync(string resourceName, CancellationToken cancellationToken = default)
     {
-        var containerId = await GetContainerIdAsync(resourceName, includeExited: true, cancellationToken);
+        var containerId = await GetContainerIdAsync(resourceName, includeExited: true, cancellationToken: cancellationToken);
         await RunDockerCommandAsync($"start {containerId}", cancellationToken);
     }
 
