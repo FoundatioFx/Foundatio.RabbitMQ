@@ -67,7 +67,7 @@ public class ChaosIntegrationTests
     }
 
     [Fact]
-    public async Task DiskAlarm_TriggersAndClears()
+    public async Task SetDiskFreeLimit_WhenSetToUnreachableValue_TriggersAndClearsAlarm()
     {
         var chaos = _fixture.Chaos;
 
@@ -304,7 +304,7 @@ public class ChaosIntegrationTests
     }
 
     [Fact]
-    public async Task ClusterStatus_ReportsRunningNodes()
+    public async Task GetClusterStatus_WhenAllNodesHealthy_ReportsRunningNodes()
     {
         var chaos = _fixture.Chaos;
         var status = await chaos.GetClusterStatusAsync("chaos-1");
