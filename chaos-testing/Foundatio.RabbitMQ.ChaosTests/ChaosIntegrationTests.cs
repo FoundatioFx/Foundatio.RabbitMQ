@@ -15,9 +15,9 @@ namespace Foundatio.RabbitMQ.ChaosTests;
 
 public class ChaosFixture : IAsyncLifetime
 {
-    private DistributedApplication? _app;
+    private static readonly Lazy<Task<DistributedApplication>> s_sharedApp = new(StartAppAsync, LazyThreadSafetyMode.ExecutionAndPublication);
 
-    public DistributedApplication App => _app ?? throw new InvalidOperationException("AppHost not initialized");
+    public DistributedApplication App => s_sharedApp.Value.GetAwaiter().GetResult();
     private ChaosTestHelper? _chaos;
     private ILoggerFactory? _loggerFactory;
     public ChaosTestHelper Chaos => _chaos ??= new(App, _loggerFactory);
@@ -30,32 +30,36 @@ public class ChaosFixture : IAsyncLifetime
 
     public async ValueTask InitializeAsync()
     {
+        _ = await s_sharedApp.Value;
+    }
+
+    private static async Task<DistributedApplication> StartAppAsync()
+    {
         var appHost = await DistributedApplicationTestingBuilder
             .CreateAsync<Projects.Foundatio_RabbitMQ_AppHost>();
 
-        _app = await appHost.BuildAsync();
+        var app = await appHost.BuildAsync();
         using var startCts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
-        await _app.StartAsync(startCts.Token);
+        await app.StartAsync(startCts.Token);
 
-        await _app.ResourceNotifications.WaitForResourceAsync(
+        await app.ResourceNotifications.WaitForResourceAsync(
             "chaos-1", KnownResourceStates.Running)
             .WaitAsync(TimeSpan.FromSeconds(90));
 
-        await _app.ResourceNotifications.WaitForResourceAsync(
+        await app.ResourceNotifications.WaitForResourceAsync(
             "chaos-2", KnownResourceStates.Running)
             .WaitAsync(TimeSpan.FromSeconds(90));
 
         await Task.Delay(TimeSpan.FromSeconds(15));
+
+        return app;
     }
 
-    public ValueTask DisposeAsync() => _app?.DisposeAsync() ?? ValueTask.CompletedTask;
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }
 
-[CollectionDefinition("Chaos")]
-public class ChaosCollection : ICollectionFixture<ChaosFixture>;
-
-[Collection("Chaos")]
-public class ChaosIntegrationTests(ChaosFixture fixture, ITestOutputHelper output) : TestWithLoggingBase(output)
+public class ChaosIntegrationTests(ChaosFixture fixture, ITestOutputHelper output)
+    : TestWithLoggingBase(output), IClassFixture<ChaosFixture>
 {
     private readonly ChaosFixture _fixture = fixture;
 

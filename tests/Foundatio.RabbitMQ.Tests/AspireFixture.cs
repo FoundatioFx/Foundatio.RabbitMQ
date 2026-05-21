@@ -10,34 +10,26 @@ namespace Foundatio.RabbitMQ.Tests;
 
 public class AspireFixture : IAsyncLifetime
 {
-    private DistributedApplication? _app;
+    private static readonly Lazy<Task<DistributedApplication>> s_sharedApp = new(StartAppAsync, LazyThreadSafetyMode.ExecutionAndPublication);
 
-    public DistributedApplication App => _app ?? throw new InvalidOperationException("AppHost not initialized");
+    public DistributedApplication App => s_sharedApp.Value.GetAwaiter().GetResult();
     public string MessagingConnectionString { get; private set; } = string.Empty;
     public string MessagingDelayedConnectionString { get; private set; } = string.Empty;
 
     public async ValueTask InitializeAsync()
     {
-        var appHost = await DistributedApplicationTestingBuilder
-            .CreateAsync<Projects.Foundatio_RabbitMQ_AppHost>();
+        var app = await s_sharedApp.Value;
 
-        _app = await appHost.BuildAsync();
-        using var startCts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
-        await _app.StartAsync(startCts.Token);
-
-        await _app.ResourceNotifications.WaitForResourceHealthyAsync("messaging")
-            .WaitAsync(TimeSpan.FromSeconds(120));
-
-        var connectionString = await _app.GetConnectionStringAsync("messaging");
+        var connectionString = await app.GetConnectionStringAsync("messaging");
         MessagingConnectionString = connectionString ?? throw new InvalidOperationException("Could not get messaging connection string");
 
         try
         {
-            await _app.ResourceNotifications.WaitForResourceAsync(
+            await app.ResourceNotifications.WaitForResourceAsync(
                 "messaging-delayed", KnownResourceStates.Running)
                 .WaitAsync(TimeSpan.FromSeconds(120));
 
-            var delayedEndpoint = _app.GetEndpoint("messaging-delayed", "amqp");
+            var delayedEndpoint = app.GetEndpoint("messaging-delayed", "amqp");
             MessagingDelayedConnectionString = $"amqp://guest:guest@{delayedEndpoint.Host}:{delayedEndpoint.Port}";
         }
         catch (TimeoutException)
@@ -46,8 +38,20 @@ public class AspireFixture : IAsyncLifetime
         }
     }
 
-    public ValueTask DisposeAsync() => _app?.DisposeAsync() ?? ValueTask.CompletedTask;
-}
+    private static async Task<DistributedApplication> StartAppAsync()
+    {
+        var appHost = await DistributedApplicationTestingBuilder
+            .CreateAsync<Projects.Foundatio_RabbitMQ_AppHost>();
 
-[CollectionDefinition("Aspire")]
-public class AspireCollection : ICollectionFixture<AspireFixture>;
+        var app = await appHost.BuildAsync();
+        using var startCts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        await app.StartAsync(startCts.Token);
+
+        await app.ResourceNotifications.WaitForResourceHealthyAsync("messaging")
+            .WaitAsync(TimeSpan.FromSeconds(120));
+
+        return app;
+    }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}

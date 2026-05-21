@@ -2,9 +2,5 @@ using Xunit;
 
 namespace Foundatio.RabbitMQ.Tests.Messaging;
 
-[Collection("Aspire")]
-public class RabbitMqMessageBusTests : RabbitMqMessageBusTestBase
-{
-    public RabbitMqMessageBusTests(AspireFixture fixture, ITestOutputHelper output)
-        : base(fixture.MessagingConnectionString, output) { }
-}
+public class RabbitMqMessageBusTests(AspireFixture fixture, ITestOutputHelper output)
+    : RabbitMqMessageBusTestBase(fixture.MessagingConnectionString, output), IClassFixture<AspireFixture>;
