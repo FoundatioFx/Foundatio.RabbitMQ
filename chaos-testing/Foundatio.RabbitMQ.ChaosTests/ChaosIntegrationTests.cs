@@ -41,13 +41,7 @@ public class ChaosFixture : IAsyncLifetime
         await Task.Delay(TimeSpan.FromSeconds(15));
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        if (_app is not null)
-        {
-            await _app.DisposeAsync();
-        }
-    }
+    public ValueTask DisposeAsync() => _app?.DisposeAsync() ?? ValueTask.CompletedTask;
 }
 
 [CollectionDefinition("Chaos")]

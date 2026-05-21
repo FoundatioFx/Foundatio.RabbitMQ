@@ -46,13 +46,7 @@ public class AspireFixture : IAsyncLifetime
         }
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        if (_app is not null)
-        {
-            await _app.DisposeAsync();
-        }
-    }
+    public ValueTask DisposeAsync() => _app?.DisposeAsync() ?? ValueTask.CompletedTask;
 }
 
 [CollectionDefinition("Aspire")]
