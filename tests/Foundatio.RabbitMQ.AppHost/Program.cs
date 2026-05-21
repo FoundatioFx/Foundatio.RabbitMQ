@@ -15,7 +15,6 @@ var messagingDelayed = builder.AddContainer("messaging-delayed", "foundatiorabbi
 
 var chaosNode1 = builder.AddContainer("chaos-1", "rabbitmq", "4.2.2-management")
     .WithContainerRuntimeArgs("--memory=384m")
-    .WithContainerRuntimeArgs("--mount", "type=tmpfs,destination=/var/lib/rabbitmq,tmpfs-size=52428800,tmpfs-mode=1777")
     .WithEnvironment("RABBITMQ_DEFAULT_USER", "guest")
     .WithEnvironment("RABBITMQ_DEFAULT_PASS", "guest")
     .WithEnvironment("RABBITMQ_ERLANG_COOKIE", "chaos-testing-cookie")
@@ -26,7 +25,6 @@ var chaosNode1 = builder.AddContainer("chaos-1", "rabbitmq", "4.2.2-management")
 
 var chaosNode2 = builder.AddContainer("chaos-2", "rabbitmq", "4.2.2-management")
     .WithContainerRuntimeArgs("--memory=448m")
-    .WithContainerRuntimeArgs("--mount", "type=tmpfs,destination=/var/lib/rabbitmq,tmpfs-size=78643200,tmpfs-mode=1777")
     .WithEnvironment("RABBITMQ_DEFAULT_USER", "guest")
     .WithEnvironment("RABBITMQ_DEFAULT_PASS", "guest")
     .WithEnvironment("RABBITMQ_ERLANG_COOKIE", "chaos-testing-cookie")
@@ -38,7 +36,6 @@ var chaosNode2 = builder.AddContainer("chaos-2", "rabbitmq", "4.2.2-management")
 
 var chaosNode3 = builder.AddContainer("chaos-3", "rabbitmq", "4.2.2-management")
     .WithContainerRuntimeArgs("--memory=512m")
-    .WithContainerRuntimeArgs("--mount", "type=tmpfs,destination=/var/lib/rabbitmq,tmpfs-size=104857600,tmpfs-mode=1777")
     .WithEnvironment("RABBITMQ_DEFAULT_USER", "guest")
     .WithEnvironment("RABBITMQ_DEFAULT_PASS", "guest")
     .WithEnvironment("RABBITMQ_ERLANG_COOKIE", "chaos-testing-cookie")
