@@ -5,44 +5,55 @@ using System.Threading;
 using System.Threading.Tasks;
 using Aspire.Hosting;
 using Aspire.Hosting.Testing;
+using Microsoft.Extensions.Logging;
 
 namespace Foundatio.RabbitMQ.ChaosTests;
 
 public class ChaosTestHelper
 {
     private readonly DistributedApplication _app;
+    private readonly ILogger _logger;
 
-    public ChaosTestHelper(DistributedApplication app)
+    public ChaosTestHelper(DistributedApplication app, ILoggerFactory? loggerFactory = null)
     {
         _app = app;
+        _logger = loggerFactory?.CreateLogger<ChaosTestHelper>() ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<ChaosTestHelper>.Instance;
     }
 
     public async Task FillDiskAsync(string resourceName, CancellationToken cancellationToken = default)
     {
+        _logger.LogInformation("Setting disk_free_limit to 999GB on {Resource} to trigger alarm", resourceName);
         var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
         await DockerExecAsync(containerId,
             "rabbitmqctl set_disk_free_limit 999GB",
             cancellationToken);
+        _logger.LogInformation("Disk alarm triggered on {Resource}", resourceName);
     }
 
     public async Task ClearDiskAsync(string resourceName, CancellationToken cancellationToken = default)
     {
+        _logger.LogInformation("Resetting disk_free_limit to 10MB on {Resource}", resourceName);
         var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
         await DockerExecAsync(containerId,
             "rabbitmqctl set_disk_free_limit 10MB",
             cancellationToken);
+        _logger.LogInformation("Disk alarm cleared on {Resource}", resourceName);
     }
 
     public async Task StopNodeAsync(string resourceName, CancellationToken cancellationToken = default)
     {
+        _logger.LogInformation("Killing container for {Resource}", resourceName);
         var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
         await RunDockerCommandAsync($"kill {containerId}", cancellationToken);
+        _logger.LogInformation("Container killed for {Resource}", resourceName);
     }
 
     public async Task StartNodeAsync(string resourceName, CancellationToken cancellationToken = default)
     {
+        _logger.LogInformation("Starting container for {Resource}", resourceName);
         var containerId = await GetContainerIdAsync(resourceName, includeExited: true, cancellationToken: cancellationToken);
         await RunDockerCommandAsync($"start {containerId}", cancellationToken);
+        _logger.LogInformation("Container started for {Resource}", resourceName);
     }
 
     public async Task<bool> HasDiskAlarmAsync(string resourceName, CancellationToken cancellationToken = default)
@@ -129,8 +140,8 @@ public class ChaosTestHelper
 
         if (process.ExitCode != 0)
             throw new InvalidOperationException(
-                $"docker {args} failed (exit code {process.ExitCode}): {errorTask.Result.Trim()}");
+                $"docker {args} failed (exit code {process.ExitCode}): {await errorTask}");
 
-        return outputTask.Result;
+        return await outputTask;
     }
 }
