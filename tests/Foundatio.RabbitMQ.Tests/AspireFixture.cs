@@ -13,15 +13,15 @@ public class AspireFixture : IAsyncLifetime
     private static readonly Lazy<Task<DistributedApplication>> s_sharedApp = new(StartAppAsync, LazyThreadSafetyMode.ExecutionAndPublication);
 
     public DistributedApplication App => s_sharedApp.Value.GetAwaiter().GetResult();
-    public string MessagingConnectionString { get; private set; } = string.Empty;
-    public string MessagingDelayedConnectionString { get; private set; } = string.Empty;
+    public string? MessagingConnectionString { get; private set; }
+    public string? MessagingDelayedConnectionString { get; private set; }
 
     public async ValueTask InitializeAsync()
     {
         var app = await s_sharedApp.Value;
 
-        var connectionString = await app.GetConnectionStringAsync("messaging");
-        MessagingConnectionString = connectionString ?? throw new InvalidOperationException("Could not get messaging connection string");
+        MessagingConnectionString = await app.GetConnectionStringAsync("messaging")
+            ?? throw new InvalidOperationException("Could not get messaging connection string");
 
         try
         {
@@ -34,7 +34,7 @@ public class AspireFixture : IAsyncLifetime
         }
         catch (TimeoutException)
         {
-            MessagingDelayedConnectionString = string.Empty;
+            MessagingDelayedConnectionString = null;
         }
     }
 

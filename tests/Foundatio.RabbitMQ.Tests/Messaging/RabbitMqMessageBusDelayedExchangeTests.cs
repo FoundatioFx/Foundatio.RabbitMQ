@@ -4,15 +4,10 @@ namespace Foundatio.RabbitMQ.Tests.Messaging;
 
 public class RabbitMqMessageBusDelayedExchangeTests : RabbitMqMessageBusTestBase, IClassFixture<AspireFixture>
 {
-    private readonly string _delayedConnectionString;
-
     public RabbitMqMessageBusDelayedExchangeTests(AspireFixture fixture, ITestOutputHelper output)
-        : base(string.IsNullOrEmpty(fixture.MessagingDelayedConnectionString)
-            ? fixture.MessagingConnectionString
-            : fixture.MessagingDelayedConnectionString, output)
+        : base(fixture.MessagingDelayedConnectionString ?? fixture.MessagingConnectionString!, output)
     {
-        _delayedConnectionString = fixture.MessagingDelayedConnectionString;
-        Assert.SkipWhen(string.IsNullOrEmpty(_delayedConnectionString),
+        Assert.SkipWhen(string.IsNullOrEmpty(fixture.MessagingDelayedConnectionString),
             "Delayed exchange container not available");
     }
 }
