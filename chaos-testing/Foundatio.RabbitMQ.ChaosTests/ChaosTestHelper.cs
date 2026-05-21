@@ -49,7 +49,8 @@ public class ChaosTestHelper
     {
         var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
         var output = await DockerExecAsync(containerId, "rabbitmqctl status --formatter json", cancellationToken);
-        return output.Contains("\"resource\":\"disk\"");
+        return output.Contains("disk", StringComparison.OrdinalIgnoreCase) &&
+               output.Contains("\"resource\"", StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task WaitForAlarmClearedAsync(string resourceName, TimeSpan timeout, CancellationToken cancellationToken = default)
@@ -92,7 +93,7 @@ public class ChaosTestHelper
     {
         var flags = includeExited ? "ps -aq" : "ps -q";
         var output = await RunDockerCommandAsync(
-            $"{flags} --filter \"name={resourceName}\"",
+            $"{flags} --filter \"name=^{resourceName}$\"",
             cancellationToken);
 
         var containerId = output.Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
@@ -121,14 +122,15 @@ public class ChaosTestHelper
         };
 
         process.Start();
-        var output = await process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var error = await process.StandardError.ReadToEndAsync(cancellationToken);
+        var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        await Task.WhenAll(outputTask, errorTask);
         await process.WaitForExitAsync(cancellationToken);
 
         if (process.ExitCode != 0)
             throw new InvalidOperationException(
-                $"docker {args} failed (exit code {process.ExitCode}): {error.Trim()}");
+                $"docker {args} failed (exit code {process.ExitCode}): {errorTask.Result.Trim()}");
 
-        return output;
+        return outputTask.Result;
     }
 }

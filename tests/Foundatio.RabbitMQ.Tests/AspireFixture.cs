@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
@@ -21,9 +22,11 @@ public class AspireFixture : IAsyncLifetime
             .CreateAsync<Projects.Foundatio_RabbitMQ_AppHost>();
 
         _app = await appHost.BuildAsync();
-        await _app.StartAsync();
+        using var startCts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        await _app.StartAsync(startCts.Token);
 
-        await _app.ResourceNotifications.WaitForResourceHealthyAsync("messaging");
+        await _app.ResourceNotifications.WaitForResourceHealthyAsync("messaging")
+            .WaitAsync(TimeSpan.FromSeconds(120));
 
         var connectionString = await _app.GetConnectionStringAsync("messaging");
         MessagingConnectionString = connectionString ?? throw new InvalidOperationException("Could not get messaging connection string");

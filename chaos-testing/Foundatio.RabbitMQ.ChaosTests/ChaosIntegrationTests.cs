@@ -34,6 +34,10 @@ public class ChaosFixture : IAsyncLifetime
             "chaos-1", KnownResourceStates.Running)
             .WaitAsync(TimeSpan.FromSeconds(90));
 
+        await _app.ResourceNotifications.WaitForResourceAsync(
+            "chaos-2", KnownResourceStates.Running)
+            .WaitAsync(TimeSpan.FromSeconds(90));
+
         await Task.Delay(TimeSpan.FromSeconds(15));
     }
 
@@ -50,7 +54,7 @@ public class ChaosFixture : IAsyncLifetime
 public class ChaosCollection : ICollectionFixture<ChaosFixture>;
 
 [Collection("Chaos")]
-public class ChaosIntegrationTests
+public class ChaosIntegrationTests : IDisposable
 {
     private readonly ChaosFixture _fixture;
     private readonly ITestOutputHelper _output;
@@ -66,6 +70,8 @@ public class ChaosIntegrationTests
             builder.AddProvider(new XUnitLoggerProvider(output));
         });
     }
+
+    public void Dispose() => _loggerFactory.Dispose();
 
     [Fact]
     public async Task SetDiskFreeLimit_WhenSetToUnreachableValue_TriggersAndClearsAlarm()

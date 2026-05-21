@@ -16,6 +16,11 @@ if [[ -z "$TOOL" || -z "$NODE" ]]; then
     exit 1
 fi
 
+if [[ ! "$NODE" =~ ^chaos-[1-3]$ ]]; then
+    echo "{\"status\": \"error\", \"message\": \"Invalid node: ${NODE}. Must be chaos-1, chaos-2, or chaos-3\"}"
+    exit 1
+fi
+
 get_container_id() {
     local name="$1"
     local container_id
