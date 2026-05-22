@@ -114,25 +114,24 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
 
         // Assert - publish should eventually succeed after recovery
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        var exception = await Record.ExceptionAsync(async () =>
-        {
-            while (!cts.Token.IsCancellationRequested)
-            {
-                try
-                {
-                    await messageBus.PublishAsync(new SimpleMessageA { Data = "after-restart" },
-                        cancellationToken: cts.Token);
-                    return;
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.LogWarning(ex, "Publish failed during recovery, retrying...");
-                    await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
-                }
-            }
-        });
+        bool published = false;
 
-        Assert.Null(exception);
+        while (!cts.Token.IsCancellationRequested && !published)
+        {
+            try
+            {
+                await messageBus.PublishAsync(new SimpleMessageA { Data = "after-restart" },
+                    cancellationToken: cts.Token);
+                published = true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Publish failed during recovery, retrying...");
+                await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
+            }
+        }
+
+        Assert.True(published, "Should be able to publish after node restart recovery");
     }
 
     [Fact]
