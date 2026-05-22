@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Concurrent;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Aspire.Hosting.Testing;
 using Foundatio.Messaging;
 using Foundatio.Tests.Messaging;
 using Foundatio.Xunit;
@@ -36,22 +34,19 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
             await Chaos.WaitForAlarmActiveAsync("chaos-1", TimeSpan.FromSeconds(30), TestCancellationToken);
 
             var publishCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            try
-            {
-                var publishTask = messageBus.PublishAsync(new SimpleMessageA { Data = "during alarm" },
-                    cancellationToken: publishCts.Token);
+            var publishTask = messageBus.PublishAsync(new SimpleMessageA { Data = "during alarm" },
+                cancellationToken: publishCts.Token);
 
-                // Assert - publish should block or fail while alarm is active
-                var completed = publishTask.IsCompleted;
-                _logger.LogInformation("Publish completed immediately: {Completed}", completed);
+            // Assert - publish should block or fail while alarm is active
+            var completed = publishTask.IsCompleted;
+            _logger.LogInformation("Publish completed immediately: {Completed}", completed);
 
-                await Chaos.ClearDiskAsync("chaos-1", TestCancellationToken);
-                await Chaos.WaitForAlarmClearedAsync("chaos-1", TimeSpan.FromSeconds(30), TestCancellationToken);
-            }
-            finally
-            {
-                publishCts.Dispose();
-            }
+            await Chaos.ClearDiskAsync("chaos-1", TestCancellationToken);
+            await Chaos.WaitForAlarmClearedAsync("chaos-1", TimeSpan.FromSeconds(30), TestCancellationToken);
+
+            try { await publishTask; }
+            catch (OperationCanceledException) { }
+            finally { publishCts.Dispose(); }
         }
         finally
         {
@@ -165,7 +160,6 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
         {
             // Assert - should still be able to publish (failover to chaos-2 or chaos-3)
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            Exception? lastException = null;
             bool published = false;
 
             while (!cts.Token.IsCancellationRequested && !published)
@@ -178,7 +172,6 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    lastException = ex;
                     _logger.LogWarning(ex, "Publish attempt failed, retrying...");
                     await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
                 }

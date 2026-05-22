@@ -90,7 +90,7 @@ public class ChaosTestHelper
     {
         var flags = includeExited ? "ps -aq" : "ps -q";
         var output = await RunDockerCommandAsync(
-            $"{flags} --filter \"name=^{resourceName}$\"",
+            $"{flags} --filter \"name={resourceName}\"",
             cancellationToken);
 
         var containerId = output.Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();

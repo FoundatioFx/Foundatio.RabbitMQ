@@ -7,7 +7,6 @@ using System.Threading.Tasks;
 using Foundatio.Messaging;
 using Foundatio.RabbitMQ;
 using Microsoft.Extensions.Logging;
-using OpenTelemetry;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Resources;
 
@@ -209,8 +208,16 @@ static async Task RunSubscriberAsync(
 
         logger.LogInformation("Waiting for messages. Press Ctrl+C to quit...");
         using var cts = new CancellationTokenSource();
-        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
-        try { await Task.Delay(Timeout.Infinite, cts.Token); }
+        Console.CancelKeyPress += (_, e) =>
+        {
+            e.Cancel = true;
+            cts.Cancel();
+        };
+
+        try
+        {
+            await Task.Delay(Timeout.Infinite, cts.Token);
+        }
         catch (OperationCanceledException) { }
     }
     finally

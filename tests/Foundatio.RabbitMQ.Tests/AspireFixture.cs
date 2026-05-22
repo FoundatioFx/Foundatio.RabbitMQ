@@ -51,6 +51,12 @@ public class AspireFixture : IAsyncLifetime
         await app.ResourceNotifications.WaitForResourceHealthyAsync("messaging")
             .WaitAsync(TimeSpan.FromSeconds(120));
 
+        for (int i = 1; i <= 3; i++)
+        {
+            await app.ResourceNotifications.WaitForResourceHealthyAsync($"chaos-{i}")
+                .WaitAsync(TimeSpan.FromSeconds(120));
+        }
+
         return app;
     }
 

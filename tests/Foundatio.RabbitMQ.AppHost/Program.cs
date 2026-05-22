@@ -9,26 +9,26 @@ var messagingDelayed = builder.AddContainer("messaging-delayed", "foundatiorabbi
     .WithEndpoint(targetPort: 5672, name: "amqp", scheme: "tcp")
     .WithEndpoint(targetPort: 15672, name: "management", scheme: "http");
 
-var memoryLimits = new[] { "384m", "448m", "512m" };
+var containerMemoryLimits = new[] { "384m", "448m", "512m" };
 var chaosNodes = new List<IResourceBuilder<ContainerResource>>(3);
 
-for (int i = 0; i < 3; i++)
+for (int nodeIndex = 0; nodeIndex < 3; nodeIndex++)
 {
-    var node = builder.AddContainer($"chaos-{i + 1}", "rabbitmq", "4.2.2-management")
-        .WithContainerRuntimeArgs($"--memory={memoryLimits[i]}", "--hostname", "localhost")
+    var chaosNode = builder.AddContainer($"chaos-{nodeIndex + 1}", "rabbitmq", "4.2.2-management")
+        .WithContainerRuntimeArgs($"--memory={containerMemoryLimits[nodeIndex]}", "--hostname", "localhost")
         .WithEnvironment("RABBITMQ_DEFAULT_USER", "guest")
         .WithEnvironment("RABBITMQ_DEFAULT_PASS", "guest")
         .WithEnvironment("RABBITMQ_NODENAME", "rabbit@localhost")
-        .WithBindMount($"config/chaos-{i + 1}.conf", "/etc/rabbitmq/conf.d/99-limits.conf", isReadOnly: true)
+        .WithBindMount($"config/chaos-{nodeIndex + 1}.conf", "/etc/rabbitmq/conf.d/99-limits.conf", isReadOnly: true)
         .WithEndpoint(targetPort: 5672, name: "amqp", scheme: "tcp")
         .WithEndpoint(targetPort: 15672, name: "management", scheme: "http")
         .WithEndpoint(targetPort: 15692, name: "prometheus", scheme: "http")
         .WithHttpHealthCheck("/metrics", endpointName: "prometheus");
 
-    if (i > 0)
-        node.WaitFor(chaosNodes[0]);
+    if (nodeIndex > 0)
+        chaosNode.WaitFor(chaosNodes[0]);
 
-    chaosNodes.Add(node);
+    chaosNodes.Add(chaosNode);
 }
 
 var chaos1Amqp = chaosNodes[0].GetEndpoint("amqp");
@@ -104,7 +104,7 @@ static void AddChaosCommand(IResourceBuilder<ContainerResource> node, string nam
 
 static async Task DockerExecAsync(string resourceName, string command)
 {
-    var containerId = await RunDockerAsync($"ps -q --filter \"name=^{resourceName}$\"");
+    var containerId = await RunDockerAsync($"ps -q --filter \"name={resourceName}\"");
     if (string.IsNullOrWhiteSpace(containerId))
         throw new InvalidOperationException($"Container '{resourceName}' not found");
 
