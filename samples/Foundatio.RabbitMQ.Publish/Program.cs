@@ -169,6 +169,9 @@ static async Task RunPublisher(
             .Build();
     }
 
+    using var tracerDisposable = tracerProvider;
+    using var meterDisposable = meterProvider;
+
     using var loggerFactory = LoggerFactory.Create(builder =>
     {
         builder.AddConsole().SetMinimumLevel(logLevel);
@@ -310,7 +313,4 @@ static async Task RunPublisher(
 
         logger.LogInformation("Exiting. Total orders sent: {Count}", orderCount);
     }
-
-    tracerProvider?.Dispose();
-    meterProvider?.Dispose();
 }

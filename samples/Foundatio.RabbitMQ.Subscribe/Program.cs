@@ -154,6 +154,9 @@ static async Task RunSubscriberAsync(
             .Build();
     }
 
+    using var tracerDisposable = tracerProvider;
+    using var meterDisposable = meterProvider;
+
     using ILoggerFactory loggerFactory = LoggerFactory.Create(builder =>
     {
         builder.AddConsole().SetMinimumLevel(logLevel);
@@ -272,7 +275,4 @@ static async Task RunSubscriberAsync(
 
         logger.LogInformation("All subscribers stopped.");
     }
-
-    tracerProvider?.Dispose();
-    meterProvider?.Dispose();
 }
