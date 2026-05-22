@@ -263,7 +263,7 @@ static async Task RunPublisher(
             {
                 break;
             }
-            catch (Exception ex)
+            catch (Foundatio.Messaging.MessageBusException ex)
             {
                 ++failCount;
                 logger.LogWarning(ex, "Publish failed (order #{Seq}), retrying in {Interval}ms...", orderCount, interval);
