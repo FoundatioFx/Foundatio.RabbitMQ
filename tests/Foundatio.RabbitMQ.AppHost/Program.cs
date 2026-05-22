@@ -17,7 +17,8 @@ for (int nodeIndex = 0; nodeIndex < 3; nodeIndex++)
 {
     string hostname = chaosHostnames[nodeIndex];
     var chaosNode = builder.AddContainer($"chaos-{nodeIndex + 1}", "rabbitmq", "4.2.2-management")
-        .WithContainerRuntimeArgs($"--memory={containerMemoryLimits[nodeIndex]}", "--hostname", hostname, "--network-alias", hostname)
+        .WithContainerNetworkAlias(hostname)
+        .WithContainerRuntimeArgs($"--memory={containerMemoryLimits[nodeIndex]}", "--hostname", hostname)
         .WithEnvironment("RABBITMQ_DEFAULT_USER", "guest")
         .WithEnvironment("RABBITMQ_DEFAULT_PASS", "guest")
         .WithEnvironment("RABBITMQ_NODENAME", $"rabbit@{hostname}")
