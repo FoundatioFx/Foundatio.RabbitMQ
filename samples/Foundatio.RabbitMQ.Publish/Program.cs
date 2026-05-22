@@ -6,16 +6,20 @@ using System.Threading.Tasks;
 using Foundatio.Messaging;
 using Foundatio.RabbitMQ;
 using Microsoft.Extensions.Logging;
+using OpenTelemetry;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Resources;
 
 Option<string> connectionStringOption = new("--connection-string")
 {
     Description = "RabbitMQ connection string (provides credentials and vhost)",
-    DefaultValueFactory = _ => "amqp://localhost:5672"
+    DefaultValueFactory = _ => Environment.GetEnvironmentVariable("ConnectionStrings__messaging") ?? "amqp://localhost:5672"
 };
 
 Option<string> hostsOption = new("--hosts")
 {
-    Description = "Comma-separated list of hosts for failover (e.g., localhost:5672,localhost:5673,localhost:5674)"
+    Description = "Comma-separated list of hosts for failover (e.g., localhost:5672,localhost:5673,localhost:5674)",
+    DefaultValueFactory = _ => Environment.GetEnvironmentVariable("CHAOS_HOSTS") ?? ""
 };
 
 Option<string> topicOption = new("--topic")
@@ -142,6 +146,11 @@ static async Task RunPublisher(
     using var loggerFactory = LoggerFactory.Create(builder =>
     {
         builder.AddConsole().SetMinimumLevel(logLevel);
+        builder.AddOpenTelemetry(otel =>
+        {
+            otel.SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("publisher"));
+            otel.AddOtlpExporter();
+        });
     });
     var logger = loggerFactory.CreateLogger("Publisher");
 

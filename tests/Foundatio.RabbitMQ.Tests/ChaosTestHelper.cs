@@ -7,7 +7,7 @@ using Aspire.Hosting;
 using Aspire.Hosting.Testing;
 using Microsoft.Extensions.Logging;
 
-namespace Foundatio.RabbitMQ.ChaosTests;
+namespace Foundatio.RabbitMQ.Tests;
 
 public class ChaosTestHelper
 {
@@ -24,20 +24,14 @@ public class ChaosTestHelper
     {
         _logger.LogInformation("Setting disk_free_limit to 999GB on {Resource} to trigger alarm", resourceName);
         var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
-        await DockerExecAsync(containerId,
-            "rabbitmqctl set_disk_free_limit 999GB",
-            cancellationToken);
-        _logger.LogInformation("Disk alarm triggered on {Resource}", resourceName);
+        await DockerExecAsync(containerId, "rabbitmqctl set_disk_free_limit 999GB", cancellationToken);
     }
 
     public async Task ClearDiskAsync(string resourceName, CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Resetting disk_free_limit to 10MB on {Resource}", resourceName);
         var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
-        await DockerExecAsync(containerId,
-            "rabbitmqctl set_disk_free_limit 10MB",
-            cancellationToken);
-        _logger.LogInformation("Disk alarm cleared on {Resource}", resourceName);
+        await DockerExecAsync(containerId, "rabbitmqctl set_disk_free_limit 10MB", cancellationToken);
     }
 
     public async Task StopNodeAsync(string resourceName, CancellationToken cancellationToken = default)
@@ -45,7 +39,6 @@ public class ChaosTestHelper
         _logger.LogInformation("Killing container for {Resource}", resourceName);
         var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
         await RunDockerCommandAsync($"kill {containerId}", cancellationToken);
-        _logger.LogInformation("Container killed for {Resource}", resourceName);
     }
 
     public async Task StartNodeAsync(string resourceName, CancellationToken cancellationToken = default)
@@ -53,7 +46,6 @@ public class ChaosTestHelper
         _logger.LogInformation("Starting container for {Resource}", resourceName);
         var containerId = await GetContainerIdAsync(resourceName, includeExited: true, cancellationToken: cancellationToken);
         await RunDockerCommandAsync($"start {containerId}", cancellationToken);
-        _logger.LogInformation("Container started for {Resource}", resourceName);
     }
 
     public async Task<bool> HasDiskAlarmAsync(string resourceName, CancellationToken cancellationToken = default)
@@ -62,18 +54,6 @@ public class ChaosTestHelper
         var output = await DockerExecAsync(containerId, "rabbitmqctl status --formatter json", cancellationToken);
         return output.Contains("disk", StringComparison.OrdinalIgnoreCase) &&
                output.Contains("\"resource\"", StringComparison.OrdinalIgnoreCase);
-    }
-
-    public async Task WaitForAlarmClearedAsync(string resourceName, TimeSpan timeout, CancellationToken cancellationToken = default)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            if (!await HasDiskAlarmAsync(resourceName, cancellationToken))
-                return;
-            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
-        }
-        throw new TimeoutException($"Disk alarm on '{resourceName}' did not clear within {timeout.TotalSeconds}s");
     }
 
     public async Task WaitForAlarmActiveAsync(string resourceName, TimeSpan timeout, CancellationToken cancellationToken = default)
@@ -88,10 +68,16 @@ public class ChaosTestHelper
         throw new TimeoutException($"Disk alarm on '{resourceName}' did not activate within {timeout.TotalSeconds}s");
     }
 
-    public async Task<string> GetClusterStatusAsync(string resourceName, CancellationToken cancellationToken = default)
+    public async Task WaitForAlarmClearedAsync(string resourceName, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
-        var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
-        return await DockerExecAsync(containerId, "rabbitmqctl cluster_status --formatter json", cancellationToken);
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (!await HasDiskAlarmAsync(resourceName, cancellationToken))
+                return;
+            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+        }
+        throw new TimeoutException($"Disk alarm on '{resourceName}' did not clear within {timeout.TotalSeconds}s");
     }
 
     public string GetConnectionString(string resourceName)
@@ -114,9 +100,9 @@ public class ChaosTestHelper
         return containerId;
     }
 
-    private static async Task<string> DockerExecAsync(string containerId, string command, CancellationToken cancellationToken)
+    private static Task<string> DockerExecAsync(string containerId, string command, CancellationToken cancellationToken)
     {
-        return await RunDockerCommandAsync($"exec {containerId} sh -c \"{command}\"", cancellationToken);
+        return RunDockerCommandAsync($"exec {containerId} sh -c \"{command}\"", cancellationToken);
     }
 
     private static async Task<string> RunDockerCommandAsync(string args, CancellationToken cancellationToken)

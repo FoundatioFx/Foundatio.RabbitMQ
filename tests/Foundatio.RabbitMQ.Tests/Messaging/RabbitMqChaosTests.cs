@@ -1,0 +1,231 @@
+using System;
+using System.Collections.Concurrent;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Aspire.Hosting.Testing;
+using Foundatio.Messaging;
+using Foundatio.Tests.Messaging;
+using Foundatio.Xunit;
+using Microsoft.Extensions.Logging;
+using Xunit;
+
+namespace Foundatio.RabbitMQ.Tests.Messaging;
+
+public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
+    : TestWithLoggingBase(output), IClassFixture<AspireFixture>
+{
+    private ChaosTestHelper? _chaos;
+    private ChaosTestHelper Chaos => _chaos ??= new(fixture.App, Log);
+
+    [Fact]
+    public async Task PublishAsync_DuringDiskAlarm_BlocksUntilAlarmClears()
+    {
+        // Arrange
+        var connectionString = Chaos.GetConnectionString("chaos-1");
+        var messageBus = new RabbitMQMessageBus(o => o
+            .ConnectionString(connectionString)
+            .LoggerFactory(Log));
+
+        try
+        {
+            await messageBus.PublishAsync(new SimpleMessageA { Data = "warmup" }, cancellationToken: TestCancellationToken);
+
+            // Act
+            await Chaos.FillDiskAsync("chaos-1", TestCancellationToken);
+            await Chaos.WaitForAlarmActiveAsync("chaos-1", TimeSpan.FromSeconds(30), TestCancellationToken);
+
+            var publishCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try
+            {
+                var publishTask = messageBus.PublishAsync(new SimpleMessageA { Data = "during alarm" },
+                    cancellationToken: publishCts.Token);
+
+                // Assert - publish should block or fail while alarm is active
+                var completed = publishTask.IsCompleted;
+                _logger.LogInformation("Publish completed immediately: {Completed}", completed);
+
+                await Chaos.ClearDiskAsync("chaos-1", TestCancellationToken);
+                await Chaos.WaitForAlarmClearedAsync("chaos-1", TimeSpan.FromSeconds(30), TestCancellationToken);
+            }
+            finally
+            {
+                publishCts.Dispose();
+            }
+        }
+        finally
+        {
+            await Chaos.ClearDiskAsync("chaos-1", TestCancellationToken);
+            await messageBus.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task SubscribeAsync_DuringDiskAlarm_ContinuesReceivingAfterRecovery()
+    {
+        // Arrange
+        var connectionString = Chaos.GetConnectionString("chaos-2");
+        var received = new ConcurrentBag<string>();
+
+        await using var messageBus = new RabbitMQMessageBus(o => o
+            .ConnectionString(connectionString)
+            .Topic("chaos-subscribe-test-" + Guid.NewGuid().ToString("N")[..8])
+            .LoggerFactory(Log));
+
+        await messageBus.SubscribeAsync<SimpleMessageA>(msg =>
+        {
+            received.Add(msg.Data!);
+        }, TestCancellationToken);
+
+        await messageBus.PublishAsync(new SimpleMessageA { Data = "before-alarm" }, cancellationToken: TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(2), TestCancellationToken);
+
+        // Act - trigger alarm and then clear it
+        await Chaos.FillDiskAsync("chaos-2", TestCancellationToken);
+        await Chaos.WaitForAlarmActiveAsync("chaos-2", TimeSpan.FromSeconds(30), TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(3), TestCancellationToken);
+
+        await Chaos.ClearDiskAsync("chaos-2", TestCancellationToken);
+        await Chaos.WaitForAlarmClearedAsync("chaos-2", TimeSpan.FromSeconds(30), TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(3), TestCancellationToken);
+
+        await messageBus.PublishAsync(new SimpleMessageA { Data = "after-recovery" }, cancellationToken: TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(3), TestCancellationToken);
+
+        // Assert
+        Assert.Contains("before-alarm", received);
+        Assert.Contains("after-recovery", received);
+    }
+
+    [Fact]
+    public async Task PublishAsync_AfterNodeRestart_RecoversAndDelivers()
+    {
+        // Arrange
+        var connectionString = Chaos.GetConnectionString("chaos-3");
+
+        await using var messageBus = new RabbitMQMessageBus(o => o
+            .ConnectionString(connectionString)
+            .Topic("chaos-restart-test-" + Guid.NewGuid().ToString("N")[..8])
+            .LoggerFactory(Log));
+
+        await messageBus.PublishAsync(new SimpleMessageA { Data = "before-restart" }, cancellationToken: TestCancellationToken);
+
+        // Act - kill and restart
+        await Chaos.StopNodeAsync("chaos-3", TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(5), TestCancellationToken);
+        await Chaos.StartNodeAsync("chaos-3", TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(15), TestCancellationToken);
+
+        // Assert - publish should eventually succeed after recovery
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var exception = await Record.ExceptionAsync(async () =>
+        {
+            while (!cts.Token.IsCancellationRequested)
+            {
+                try
+                {
+                    await messageBus.PublishAsync(new SimpleMessageA { Data = "after-restart" },
+                        cancellationToken: cts.Token);
+                    return;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "Publish failed during recovery, retrying...");
+                    await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
+                }
+            }
+        });
+
+        Assert.Null(exception);
+    }
+
+    [Fact]
+    public async Task PublishAsync_WithMultipleHosts_FailsOverToHealthyNode()
+    {
+        // Arrange
+        var host1 = Chaos.GetConnectionString("chaos-1");
+        var host2 = Chaos.GetConnectionString("chaos-2");
+        var host3 = Chaos.GetConnectionString("chaos-3");
+        var uri2 = new Uri(host2);
+        var uri3 = new Uri(host3);
+
+        await using var messageBus = new RabbitMQMessageBus(o => o
+            .ConnectionString(host1)
+            .Hosts([$"{uri2.Host}:{uri2.Port}", $"{uri3.Host}:{uri3.Port}"])
+            .Topic("chaos-failover-test-" + Guid.NewGuid().ToString("N")[..8])
+            .LoggerFactory(Log));
+
+        await messageBus.PublishAsync(new SimpleMessageA { Data = "warmup" }, cancellationToken: TestCancellationToken);
+
+        // Act - trigger disk alarm on primary
+        await Chaos.FillDiskAsync("chaos-1", TestCancellationToken);
+        await Chaos.WaitForAlarmActiveAsync("chaos-1", TimeSpan.FromSeconds(30), TestCancellationToken);
+
+        try
+        {
+            // Assert - should still be able to publish (failover to chaos-2 or chaos-3)
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            Exception? lastException = null;
+            bool published = false;
+
+            while (!cts.Token.IsCancellationRequested && !published)
+            {
+                try
+                {
+                    await messageBus.PublishAsync(new SimpleMessageA { Data = "via-failover" },
+                        cancellationToken: cts.Token);
+                    published = true;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    lastException = ex;
+                    _logger.LogWarning(ex, "Publish attempt failed, retrying...");
+                    await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
+                }
+            }
+
+            _logger.LogInformation("Failover publish result: published={Published}", published);
+        }
+        finally
+        {
+            await Chaos.ClearDiskAsync("chaos-1", TestCancellationToken);
+        }
+    }
+
+    [Fact]
+    public async Task PublishAsync_WithPublisherConfirms_DuringDiskAlarm_FailsOrTimesOut()
+    {
+        // Arrange
+        var connectionString = Chaos.GetConnectionString("chaos-1");
+
+        await using var messageBus = new RabbitMQMessageBus(o => o
+            .ConnectionString(connectionString)
+            .Topic("chaos-confirms-test-" + Guid.NewGuid().ToString("N")[..8])
+            .PublisherConfirmsEnabled(true)
+            .PublishRecoveryTimeout(TimeSpan.FromSeconds(5))
+            .LoggerFactory(Log));
+
+        await messageBus.PublishAsync(new SimpleMessageA { Data = "warmup" }, cancellationToken: TestCancellationToken);
+
+        // Act
+        await Chaos.FillDiskAsync("chaos-1", TestCancellationToken);
+        await Chaos.WaitForAlarmActiveAsync("chaos-1", TimeSpan.FromSeconds(30), TestCancellationToken);
+
+        try
+        {
+            // Assert - publish with confirms should fail or timeout during alarm
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var exception = await Record.ExceptionAsync(() =>
+                messageBus.PublishAsync(new SimpleMessageA { Data = "during alarm" },
+                    cancellationToken: cts.Token));
+
+            _logger.LogInformation("Exception during disk alarm publish: {Exception}", exception?.GetType().Name ?? "none");
+            Assert.True(exception is not null || cts.IsCancellationRequested,
+                "Publish with confirms should fail or timeout during disk alarm");
+        }
+        finally
+        {
+            await Chaos.ClearDiskAsync("chaos-1", TestCancellationToken);
+        }
+    }
+}

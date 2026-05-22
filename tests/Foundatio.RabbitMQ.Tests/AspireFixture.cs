@@ -12,24 +12,25 @@ public class AspireFixture : IAsyncLifetime
 {
     private static readonly Lazy<Task<DistributedApplication>> s_sharedApp = new(StartAppAsync, LazyThreadSafetyMode.ExecutionAndPublication);
 
-    public DistributedApplication App => s_sharedApp.Value.GetAwaiter().GetResult();
+    private DistributedApplication? _app;
+    public DistributedApplication App => _app ?? throw new InvalidOperationException("Fixture not initialized");
     public string? MessagingConnectionString { get; private set; }
     public string? MessagingDelayedConnectionString { get; private set; }
 
     public async ValueTask InitializeAsync()
     {
-        var app = await s_sharedApp.Value;
+        _app = await s_sharedApp.Value;
 
-        MessagingConnectionString = await app.GetConnectionStringAsync("messaging")
+        MessagingConnectionString = await _app.GetConnectionStringAsync("messaging")
             ?? throw new InvalidOperationException("Could not get messaging connection string");
 
         try
         {
-            await app.ResourceNotifications.WaitForResourceAsync(
+            await _app.ResourceNotifications.WaitForResourceAsync(
                 "messaging-delayed", KnownResourceStates.Running)
                 .WaitAsync(TimeSpan.FromSeconds(120));
 
-            var delayedEndpoint = app.GetEndpoint("messaging-delayed", "amqp");
+            var delayedEndpoint = _app.GetEndpoint("messaging-delayed", "amqp");
             MessagingDelayedConnectionString = $"amqp://guest:guest@{delayedEndpoint.Host}:{delayedEndpoint.Port}";
         }
         catch (TimeoutException)

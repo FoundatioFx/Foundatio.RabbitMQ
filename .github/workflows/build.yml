@@ -7,18 +7,3 @@ jobs:
     secrets: inherit
     with:
       new-test-runner: true
-
-  chaos-tests:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-
-      - name: Run chaos tests
-        run: dotnet test chaos-testing/Foundatio.RabbitMQ.ChaosTests/Foundatio.RabbitMQ.ChaosTests.csproj --logger "console;verbosity=detailed"
-        timeout-minutes: 10
