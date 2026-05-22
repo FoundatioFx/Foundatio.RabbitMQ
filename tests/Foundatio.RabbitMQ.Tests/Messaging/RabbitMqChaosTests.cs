@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Foundatio.Messaging;
@@ -283,5 +284,102 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
         {
             await Chaos.ClearDiskAsync("chaos-1", TestCancellationToken);
         }
+    }
+
+    [Fact]
+    public async Task SubscribeAsync_AfterNodeKill_ReconnectsAndReceivesMessages()
+    {
+        // Arrange
+        var connectionString = Chaos.GetConnectionString("chaos-3");
+        var received = new ConcurrentBag<string>();
+
+        await using var messageBus = new RabbitMQMessageBus(o => o
+            .ConnectionString(connectionString)
+            .Topic("chaos-sub-kill-test-" + Guid.NewGuid().ToString("N")[..8])
+            .LoggerFactory(Log));
+
+        await messageBus.SubscribeAsync<SimpleMessageA>(msg =>
+        {
+            received.Add(msg.Data!);
+        }, TestCancellationToken);
+
+        await messageBus.PublishAsync(new SimpleMessageA { Data = "before-kill" }, cancellationToken: TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(2), TestCancellationToken);
+        Assert.Contains("before-kill", received);
+
+        // Act - kill node and restart
+        await Chaos.StopNodeAsync("chaos-3", TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(5), TestCancellationToken);
+        await Chaos.StartNodeAsync("chaos-3", TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(15), TestCancellationToken);
+
+        // Assert - subscriber should reconnect and receive new messages
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        bool messageReceived = false;
+
+        while (!cts.Token.IsCancellationRequested && !messageReceived)
+        {
+            try
+            {
+                await messageBus.PublishAsync(new SimpleMessageA { Data = "after-kill" },
+                    cancellationToken: cts.Token);
+                await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
+                messageReceived = received.Contains("after-kill");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Publish/subscribe still recovering...");
+                await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
+            }
+        }
+
+        Assert.True(messageReceived, "Subscriber should receive messages after node kill/restart");
+    }
+
+    [Fact]
+    public async Task PublishAsync_DuringRapidNodeFlapping_RemainsResilient()
+    {
+        // Arrange
+        var connectionString = Chaos.GetConnectionString("chaos-2");
+
+        await using var messageBus = new RabbitMQMessageBus(o => o
+            .ConnectionString(connectionString)
+            .Topic("chaos-flapping-test-" + Guid.NewGuid().ToString("N")[..8])
+            .LoggerFactory(Log));
+
+        await messageBus.PublishAsync(new SimpleMessageA { Data = "warmup" }, cancellationToken: TestCancellationToken);
+
+        // Act - rapid kill/start 3 times
+        for (int i = 0; i < 3; i++)
+        {
+            _logger.LogInformation("Flap cycle {Cycle}/3: killing node", i + 1);
+            await Chaos.StopNodeAsync("chaos-2", TestCancellationToken);
+            await Task.Delay(TimeSpan.FromSeconds(3), TestCancellationToken);
+
+            _logger.LogInformation("Flap cycle {Cycle}/3: restarting node", i + 1);
+            await Chaos.StartNodeAsync("chaos-2", TestCancellationToken);
+            await Task.Delay(TimeSpan.FromSeconds(10), TestCancellationToken);
+        }
+
+        // Assert - should eventually be able to publish after flapping stabilizes
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        bool published = false;
+
+        while (!cts.Token.IsCancellationRequested && !published)
+        {
+            try
+            {
+                await messageBus.PublishAsync(new SimpleMessageA { Data = "after-flapping" },
+                    cancellationToken: cts.Token);
+                published = true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Still recovering from flapping...");
+                await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
+            }
+        }
+
+        Assert.True(published, "Publisher should recover after rapid node flapping");
     }
 }
