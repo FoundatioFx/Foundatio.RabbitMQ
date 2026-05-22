@@ -7,8 +7,11 @@ using System.Threading.Tasks;
 using Foundatio.Messaging;
 using Foundatio.RabbitMQ;
 using Microsoft.Extensions.Logging;
+using OpenTelemetry;
 using OpenTelemetry.Logs;
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 Option<string> connectionStringOption = new("--connection-string")
 {
@@ -127,26 +130,41 @@ static async Task RunSubscriberAsync(
     ArgumentException.ThrowIfNullOrWhiteSpace(topic);
     ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
 
+    var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
+    var serviceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "subscriber";
+    var resourceBuilder = ResourceBuilder.CreateDefault().AddService(serviceName);
+
+    TracerProvider? tracerProvider = null;
+    MeterProvider? meterProvider = null;
+
+    if (!string.IsNullOrEmpty(otlpEndpoint))
+    {
+        tracerProvider = Sdk.CreateTracerProviderBuilder()
+            .SetResourceBuilder(resourceBuilder)
+            .AddSource("Foundatio", "RabbitMQ.Client.*")
+            .AddOtlpExporter()
+            .Build();
+
+        meterProvider = Sdk.CreateMeterProviderBuilder()
+            .SetResourceBuilder(resourceBuilder)
+            .AddMeter("Foundatio")
+            .AddRuntimeInstrumentation()
+            .AddOtlpExporter()
+            .Build();
+    }
+
     using ILoggerFactory loggerFactory = LoggerFactory.Create(builder =>
     {
         builder.AddConsole().SetMinimumLevel(logLevel);
 
-        var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
         if (!string.IsNullOrEmpty(otlpEndpoint))
         {
             builder.AddOpenTelemetry(otel =>
             {
-                otel.SetResourceBuilder(ResourceBuilder.CreateDefault()
-                    .AddService(Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "subscriber"));
+                otel.SetResourceBuilder(resourceBuilder);
                 otel.IncludeFormattedMessage = true;
                 otel.IncludeScopes = true;
-                otel.AddOtlpExporter(otlp =>
-                {
-                    otlp.Endpoint = new Uri(otlpEndpoint);
-                    var protocol = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_PROTOCOL");
-                    if (!string.IsNullOrEmpty(protocol) && protocol.Contains("http"))
-                        otlp.Protocol = OpenTelemetry.Exporter.OtlpExportProtocol.HttpProtobuf;
-                });
+                otel.AddOtlpExporter();
             });
         }
     });
@@ -242,4 +260,7 @@ static async Task RunSubscriberAsync(
 
         logger.LogInformation("All subscribers stopped.");
     }
+
+    tracerProvider?.Dispose();
+    meterProvider?.Dispose();
 }
