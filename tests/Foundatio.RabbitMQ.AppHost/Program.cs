@@ -10,15 +10,18 @@ builder.AddContainer("messaging-delayed", "foundatiorabbitmq-rabbitmq-delayed", 
     .WithEndpoint(targetPort: 15672, name: "management", scheme: "http");
 
 var containerMemoryLimits = new[] { "384m", "448m", "512m" };
+var chaosHostnames = new[] { "chaos1", "chaos2", "chaos3" };
 var chaosNodes = new List<IResourceBuilder<ContainerResource>>(3);
 
 for (int nodeIndex = 0; nodeIndex < 3; nodeIndex++)
 {
+    string hostname = chaosHostnames[nodeIndex];
     var chaosNode = builder.AddContainer($"chaos-{nodeIndex + 1}", "rabbitmq", "4.2.2-management")
-        .WithContainerRuntimeArgs($"--memory={containerMemoryLimits[nodeIndex]}", "--hostname", "localhost")
+        .WithContainerRuntimeArgs($"--memory={containerMemoryLimits[nodeIndex]}", "--hostname", hostname, "--network-alias", hostname)
         .WithEnvironment("RABBITMQ_DEFAULT_USER", "guest")
         .WithEnvironment("RABBITMQ_DEFAULT_PASS", "guest")
-        .WithEnvironment("RABBITMQ_NODENAME", "rabbit@localhost")
+        .WithEnvironment("RABBITMQ_NODENAME", $"rabbit@{hostname}")
+        .WithEnvironment("RABBITMQ_ERLANG_COOKIE", "aspire-chaos-cluster-cookie")
         .WithBindMount($"config/chaos-{nodeIndex + 1}.conf", "/etc/rabbitmq/conf.d/99-limits.conf", isReadOnly: true)
         .WithEndpoint(targetPort: 5672, name: "amqp", scheme: "tcp")
         .WithEndpoint(targetPort: 15672, name: "management", scheme: "http")
@@ -32,23 +35,33 @@ for (int nodeIndex = 0; nodeIndex < 3; nodeIndex++)
 }
 
 var chaos1Amqp = chaosNodes[0].GetEndpoint("amqp");
+var chaos2Amqp = chaosNodes[1].GetEndpoint("amqp");
+var chaos3Amqp = chaosNodes[2].GetEndpoint("amqp");
 
 builder.AddProject<Foundatio_RabbitMQ_Publish>("publisher")
     .WaitFor(chaosNodes[0])
+    .WaitFor(chaosNodes[1])
+    .WaitFor(chaosNodes[2])
     .WithArgs("--interval", "2000", "--publisher-confirms", "--durable")
     .WithEnvironment(context =>
     {
         context.EnvironmentVariables["ConnectionStrings__messaging"] =
             ReferenceExpression.Create($"amqp://guest:guest@{chaos1Amqp.Property(EndpointProperty.Host)}:{chaos1Amqp.Property(EndpointProperty.Port)}");
+        context.EnvironmentVariables["RABBITMQ_HOSTS"] =
+            ReferenceExpression.Create($"{chaos1Amqp.Property(EndpointProperty.Host)}:{chaos1Amqp.Property(EndpointProperty.Port)},{chaos2Amqp.Property(EndpointProperty.Host)}:{chaos2Amqp.Property(EndpointProperty.Port)},{chaos3Amqp.Property(EndpointProperty.Host)}:{chaos3Amqp.Property(EndpointProperty.Port)}");
     });
 
 builder.AddProject<Foundatio_RabbitMQ_Subscribe>("subscriber")
     .WaitFor(chaosNodes[0])
+    .WaitFor(chaosNodes[1])
+    .WaitFor(chaosNodes[2])
     .WithArgs("--durable")
     .WithEnvironment(context =>
     {
         context.EnvironmentVariables["ConnectionStrings__messaging"] =
             ReferenceExpression.Create($"amqp://guest:guest@{chaos1Amqp.Property(EndpointProperty.Host)}:{chaos1Amqp.Property(EndpointProperty.Port)}");
+        context.EnvironmentVariables["RABBITMQ_HOSTS"] =
+            ReferenceExpression.Create($"{chaos1Amqp.Property(EndpointProperty.Host)}:{chaos1Amqp.Property(EndpointProperty.Port)},{chaos2Amqp.Property(EndpointProperty.Host)}:{chaos2Amqp.Property(EndpointProperty.Port)},{chaos3Amqp.Property(EndpointProperty.Host)}:{chaos3Amqp.Property(EndpointProperty.Port)}");
     });
 
 foreach (var node in chaosNodes)
