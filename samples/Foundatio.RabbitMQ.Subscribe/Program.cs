@@ -19,7 +19,7 @@ Option<string> connectionStringOption = new("--connection-string")
 Option<string> hostsOption = new("--hosts")
 {
     Description = "Comma-separated list of hosts for failover (e.g., localhost:5672,localhost:5673,localhost:5674)",
-    DefaultValueFactory = _ => Environment.GetEnvironmentVariable("CHAOS_HOSTS") ?? ""
+    DefaultValueFactory = _ => Environment.GetEnvironmentVariable("RABBITMQ_HOSTS") ?? ""
 };
 
 Option<string> topicOption = new("--topic")

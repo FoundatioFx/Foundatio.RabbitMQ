@@ -33,7 +33,7 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
             await Chaos.FillDiskAsync("chaos-1", TestCancellationToken);
             await Chaos.WaitForAlarmActiveAsync("chaos-1", TimeSpan.FromSeconds(30), TestCancellationToken);
 
-            var publishCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            using var publishCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var publishTask = messageBus.PublishAsync(new SimpleMessageA { Data = "during alarm" },
                 cancellationToken: publishCts.Token);
 
@@ -45,8 +45,10 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
             await Chaos.WaitForAlarmClearedAsync("chaos-1", TimeSpan.FromSeconds(30), TestCancellationToken);
 
             try { await publishTask; }
-            catch (OperationCanceledException) { }
-            finally { publishCts.Dispose(); }
+            catch (OperationCanceledException)
+            {
+                _logger.LogInformation("Publish timed out as expected during disk alarm");
+            }
         }
         finally
         {

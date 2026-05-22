@@ -44,7 +44,7 @@ var publisher = builder.AddProject<Foundatio_RabbitMQ_Publish>("publisher")
     {
         context.EnvironmentVariables["ConnectionStrings__messaging"] =
             ReferenceExpression.Create($"amqp://guest:guest@{chaos1Amqp.Property(EndpointProperty.Host)}:{chaos1Amqp.Property(EndpointProperty.Port)}");
-        context.EnvironmentVariables["CHAOS_HOSTS"] =
+        context.EnvironmentVariables["RABBITMQ_HOSTS"] =
             ReferenceExpression.Create($"{chaos1Amqp.Property(EndpointProperty.Host)}:{chaos1Amqp.Property(EndpointProperty.Port)},{chaos2Amqp.Property(EndpointProperty.Host)}:{chaos2Amqp.Property(EndpointProperty.Port)},{chaos3Amqp.Property(EndpointProperty.Host)}:{chaos3Amqp.Property(EndpointProperty.Port)}");
     });
 
@@ -57,7 +57,7 @@ var subscriber = builder.AddProject<Foundatio_RabbitMQ_Subscribe>("subscriber")
     {
         context.EnvironmentVariables["ConnectionStrings__messaging"] =
             ReferenceExpression.Create($"amqp://guest:guest@{chaos1Amqp.Property(EndpointProperty.Host)}:{chaos1Amqp.Property(EndpointProperty.Port)}");
-        context.EnvironmentVariables["CHAOS_HOSTS"] =
+        context.EnvironmentVariables["RABBITMQ_HOSTS"] =
             ReferenceExpression.Create($"{chaos1Amqp.Property(EndpointProperty.Host)}:{chaos1Amqp.Property(EndpointProperty.Port)},{chaos2Amqp.Property(EndpointProperty.Host)}:{chaos2Amqp.Property(EndpointProperty.Port)},{chaos3Amqp.Property(EndpointProperty.Host)}:{chaos3Amqp.Property(EndpointProperty.Port)}");
     });
 
