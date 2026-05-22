@@ -188,6 +188,68 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task PublishAsync_DuringQuorumLoss_RetriesAndResumesWhenNodeRejoins()
+    {
+        // Arrange - connect to all 3 cluster nodes
+        var host1 = Chaos.GetConnectionString("chaos-1");
+        var host2 = Chaos.GetConnectionString("chaos-2");
+        var host3 = Chaos.GetConnectionString("chaos-3");
+        var uri2 = new Uri(host2);
+        var uri3 = new Uri(host3);
+
+        await using var messageBus = new RabbitMQMessageBus(o => o
+            .ConnectionString(host1)
+            .Hosts([$"{uri2.Host}:{uri2.Port}", $"{uri3.Host}:{uri3.Port}"])
+            .Topic("chaos-quorum-loss-test-" + Guid.NewGuid().ToString("N")[..8])
+            .LoggerFactory(Log));
+
+        await messageBus.PublishAsync(new SimpleMessageA { Data = "before-quorum-loss" }, cancellationToken: TestCancellationToken);
+
+        // Act - kill 2 of 3 nodes (causes quorum loss in RabbitMQ 4.x Raft)
+        await Chaos.StopNodeAsync("chaos-2", TestCancellationToken);
+        await Chaos.StopNodeAsync("chaos-3", TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(5), TestCancellationToken);
+
+        // Publish should fail/timeout during quorum loss
+        using var failCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var publishDuringLoss = await Record.ExceptionAsync(() =>
+            messageBus.PublishAsync(new SimpleMessageA { Data = "during-quorum-loss" },
+                cancellationToken: failCts.Token));
+
+        _logger.LogInformation("Publish during quorum loss result: {Exception}", publishDuringLoss?.GetType().Name ?? "succeeded");
+        Assert.True(publishDuringLoss is not null || failCts.IsCancellationRequested,
+            "Publish should fail or timeout during quorum loss (2 of 3 nodes down)");
+
+        // Act - bring one node back to restore quorum (2 of 3 = majority)
+        await Chaos.StartNodeAsync("chaos-2", TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(15), TestCancellationToken);
+
+        // Assert - publishing should resume once quorum is restored
+        using var recoveryCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        bool published = false;
+
+        while (!recoveryCts.Token.IsCancellationRequested && !published)
+        {
+            try
+            {
+                await messageBus.PublishAsync(new SimpleMessageA { Data = "after-quorum-restored" },
+                    cancellationToken: recoveryCts.Token);
+                published = true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Publish still failing during recovery, retrying...");
+                await Task.Delay(TimeSpan.FromSeconds(2), recoveryCts.Token);
+            }
+        }
+
+        Assert.True(published, "Should be able to publish after quorum is restored (node rejoined)");
+
+        // Cleanup - restart the other node
+        await Chaos.StartNodeAsync("chaos-3", TestCancellationToken);
+    }
+
+    [Fact]
     public async Task PublishAsync_WithPublisherConfirms_DuringDiskAlarm_FailsOrTimesOut()
     {
         // Arrange
