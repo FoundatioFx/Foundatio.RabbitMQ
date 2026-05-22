@@ -136,7 +136,7 @@ public class ChaosTestHelper
         }
         catch (OperationCanceledException)
         {
-            try { process.Kill(entireProcessTree: true); } catch { }
+            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
             throw;
         }
     }

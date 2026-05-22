@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.CommandLine;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Foundatio.Messaging;
 using Foundatio.RabbitMQ;
@@ -238,12 +239,15 @@ static async Task RunPublisher(
     if (interval > 0)
     {
         logger.LogInformation("Auto-send mode enabled. Press Ctrl+C to stop.");
+        using var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+
         int orderCount = 0;
         int successCount = 0;
         int failCount = 0;
         var statsTimer = Stopwatch.StartNew();
 
-        while (true)
+        while (!cts.Token.IsCancellationRequested)
         {
             try
             {
@@ -252,9 +256,9 @@ static async Task RunPublisher(
 
                 TimeSpan? delay = delaySeconds > 0 ? TimeSpan.FromSeconds(delaySeconds) : null;
                 if (delay.HasValue)
-                    await messageBus.PublishAsync(order, delay.Value);
+                    await messageBus.PublishAsync(order, delay.Value, cancellationToken: cts.Token);
                 else
-                    await messageBus.PublishAsync(order);
+                    await messageBus.PublishAsync(order, cancellationToken: cts.Token);
 
                 ++successCount;
                 logger.LogInformation("Order #{Seq} | {OrderId} | ${Amount}", orderCount, order.OrderId, order.Amount);
@@ -276,7 +280,7 @@ static async Task RunPublisher(
                 statsTimer.Restart();
             }
 
-            await Task.Delay(interval);
+            await Task.Delay(interval, cts.Token);
         }
 
         logger.LogInformation("Exiting | Sent: {Success} | Failed: {Failed} | Total: {Total}", successCount, failCount, orderCount);
