@@ -2,10 +2,10 @@ using Projects;
 
 var builder = DistributedApplication.CreateBuilder(args);
 
-var messaging = builder.AddRabbitMQ("messaging")
+builder.AddRabbitMQ("messaging")
     .WithManagementPlugin();
 
-var messagingDelayed = builder.AddContainer("messaging-delayed", "foundatiorabbitmq-rabbitmq-delayed", "latest")
+builder.AddContainer("messaging-delayed", "foundatiorabbitmq-rabbitmq-delayed", "latest")
     .WithEndpoint(targetPort: 5672, name: "amqp", scheme: "tcp")
     .WithEndpoint(targetPort: 15672, name: "management", scheme: "http");
 
@@ -35,7 +35,7 @@ var chaos1Amqp = chaosNodes[0].GetEndpoint("amqp");
 var chaos2Amqp = chaosNodes[1].GetEndpoint("amqp");
 var chaos3Amqp = chaosNodes[2].GetEndpoint("amqp");
 
-var publisher = builder.AddProject<Foundatio_RabbitMQ_Publish>("publisher")
+builder.AddProject<Foundatio_RabbitMQ_Publish>("publisher")
     .WaitFor(chaosNodes[0])
     .WaitFor(chaosNodes[1])
     .WaitFor(chaosNodes[2])
@@ -48,7 +48,7 @@ var publisher = builder.AddProject<Foundatio_RabbitMQ_Publish>("publisher")
             ReferenceExpression.Create($"{chaos1Amqp.Property(EndpointProperty.Host)}:{chaos1Amqp.Property(EndpointProperty.Port)},{chaos2Amqp.Property(EndpointProperty.Host)}:{chaos2Amqp.Property(EndpointProperty.Port)},{chaos3Amqp.Property(EndpointProperty.Host)}:{chaos3Amqp.Property(EndpointProperty.Port)}");
     });
 
-var subscriber = builder.AddProject<Foundatio_RabbitMQ_Subscribe>("subscriber")
+builder.AddProject<Foundatio_RabbitMQ_Subscribe>("subscriber")
     .WaitFor(chaosNodes[0])
     .WaitFor(chaosNodes[1])
     .WaitFor(chaosNodes[2])
@@ -65,26 +65,55 @@ foreach (var node in chaosNodes)
 {
     AddChaosCommand(node, "trigger-disk-alarm", "Trigger Disk Alarm",
         "rabbitmqctl set_disk_free_limit 999GB",
-        new() { IconName = "AlertOn", IconVariant = IconVariant.Filled, ConfirmationMessage = "Trigger disk alarm?" });
+        new() { IconName = "AlertOn", IconVariant = IconVariant.Filled, ConfirmationMessage = "Trigger disk alarm on this node?" });
 
     AddChaosCommand(node, "clear-disk-alarm", "Clear Disk Alarm",
         "rabbitmqctl set_disk_free_limit 10MB",
-        new() { IconName = "AlertOff", IconVariant = IconVariant.Filled, ConfirmationMessage = "Clear disk alarm?" });
+        new() { IconName = "AlertOff", IconVariant = IconVariant.Filled, ConfirmationMessage = "Clear disk alarm on this node?" });
 
     AddChaosCommand(node, "trigger-memory-alarm", "Trigger Memory Alarm",
         "rabbitmqctl set_vm_memory_high_watermark 0.0001",
-        new() { IconName = "Warning", IconVariant = IconVariant.Filled, ConfirmationMessage = "Trigger memory alarm?" });
+        new() { IconName = "Warning", IconVariant = IconVariant.Filled, ConfirmationMessage = "Trigger memory alarm on this node?" });
 
     AddChaosCommand(node, "clear-memory-alarm", "Clear Memory Alarm",
         "rabbitmqctl set_vm_memory_high_watermark 0.8",
-        new() { IconName = "Checkmark", IconVariant = IconVariant.Filled, ConfirmationMessage = "Clear memory alarm?" });
+        new() { IconName = "Checkmark", IconVariant = IconVariant.Filled, ConfirmationMessage = "Clear memory alarm on this node?" });
 
     AddChaosCommand(node, "close-all-connections", "Close All Connections",
         "rabbitmqctl close_all_connections chaos-test",
-        new() { IconName = "PlugDisconnected", IconVariant = IconVariant.Filled, ConfirmationMessage = "Force-close all connections?" });
+        new() { IconName = "PlugDisconnected", IconVariant = IconVariant.Filled, ConfirmationMessage = "Force-close all connections on this node?" });
 }
 
-builder.Build().Run();
+chaosNodes[0].WithCommand("trigger-all-disk-alarms", "Trigger ALL Disk Alarms", async _ =>
+{
+    try
+    {
+        foreach (var node in chaosNodes)
+            await DockerExecAsync(node.Resource.Name, "rabbitmqctl set_disk_free_limit 999GB");
+        return CommandResults.Success();
+    }
+    catch (Exception ex)
+    {
+        return CommandResults.Failure(ex.Message);
+    }
+}, new() { IconName = "AlertUrgent", IconVariant = IconVariant.Filled, ConfirmationMessage = "Trigger disk alarms on ALL nodes? This will block ALL publishing." });
+
+chaosNodes[0].WithCommand("clear-all-disk-alarms", "Clear ALL Disk Alarms", async _ =>
+{
+    try
+    {
+        foreach (var node in chaosNodes)
+            await DockerExecAsync(node.Resource.Name, "rabbitmqctl set_disk_free_limit 10MB");
+        return CommandResults.Success();
+    }
+    catch (Exception ex)
+    {
+        return CommandResults.Failure(ex.Message);
+    }
+}, new() { IconName = "DismissCircle", IconVariant = IconVariant.Filled, ConfirmationMessage = "Clear disk alarms on ALL nodes?" });
+
+await builder.Build().RunAsync();
+
 
 static void AddChaosCommand(IResourceBuilder<ContainerResource> node, string name, string display, string rabbitmqCommand, CommandOptions options)
 {
@@ -104,8 +133,8 @@ static void AddChaosCommand(IResourceBuilder<ContainerResource> node, string nam
 
 static async Task DockerExecAsync(string resourceName, string command)
 {
-    var containerId = await RunDockerAsync($"ps -q --filter \"name={resourceName}\"");
-    if (string.IsNullOrWhiteSpace(containerId))
+    string containerId = await RunDockerAsync($"ps -q --filter \"name={resourceName}\"");
+    if (String.IsNullOrWhiteSpace(containerId))
         throw new InvalidOperationException($"Container '{resourceName}' not found");
 
     await RunDockerAsync($"exec {containerId.Trim()} sh -c \"{command}\"");
@@ -124,8 +153,9 @@ static async Task<string> RunDockerAsync(string args)
         CreateNoWindow = true
     };
     process.Start();
-    var output = await process.StandardOutput.ReadToEndAsync();
-    var error = await process.StandardError.ReadToEndAsync();
+
+    string output = await process.StandardOutput.ReadToEndAsync();
+    string error = await process.StandardError.ReadToEndAsync();
     await process.WaitForExitAsync();
 
     if (process.ExitCode != 0)

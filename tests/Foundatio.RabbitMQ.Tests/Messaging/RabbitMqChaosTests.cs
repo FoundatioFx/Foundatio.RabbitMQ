@@ -34,22 +34,20 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
             await Chaos.FillDiskAsync("chaos-1", TestCancellationToken);
             await Chaos.WaitForAlarmActiveAsync("chaos-1", TimeSpan.FromSeconds(30), TestCancellationToken);
 
-            using var publishCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            using var publishCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             var publishTask = messageBus.PublishAsync(new SimpleMessageA { Data = "during alarm" },
                 cancellationToken: publishCts.Token);
 
             // Assert - publish should not complete immediately while alarm is active
-            await Task.Delay(TimeSpan.FromSeconds(1), TestCancellationToken);
-            _logger.LogInformation("Publish completed after 1s: {Completed}", publishTask.IsCompleted);
+            await Task.Delay(TimeSpan.FromSeconds(2), TestCancellationToken);
+            Assert.False(publishTask.IsCompleted, "Publish should be blocked while disk alarm is active");
 
+            // Clear alarm and verify publish eventually completes
             await Chaos.ClearDiskAsync("chaos-1", TestCancellationToken);
             await Chaos.WaitForAlarmClearedAsync("chaos-1", TimeSpan.FromSeconds(30), TestCancellationToken);
 
-            try { await publishTask; }
-            catch (OperationCanceledException)
-            {
-                _logger.LogInformation("Publish timed out as expected during disk alarm");
-            }
+            var completed = await Task.WhenAny(publishTask, Task.Delay(TimeSpan.FromSeconds(15), TestCancellationToken));
+            Assert.Equal(publishTask, completed);
         }
         finally
         {

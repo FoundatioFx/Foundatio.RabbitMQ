@@ -151,9 +151,17 @@ static async Task RunPublisher(
         {
             builder.AddOpenTelemetry(otel =>
             {
-                otel.SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("publisher"));
+                otel.SetResourceBuilder(ResourceBuilder.CreateDefault()
+                    .AddService(Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "publisher"));
                 otel.IncludeFormattedMessage = true;
-                otel.AddOtlpExporter();
+                otel.IncludeScopes = true;
+                otel.AddOtlpExporter(otlp =>
+                {
+                    otlp.Endpoint = new Uri(otlpEndpoint);
+                    var protocol = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_PROTOCOL");
+                    if (!string.IsNullOrEmpty(protocol) && protocol.Contains("http"))
+                        otlp.Protocol = OpenTelemetry.Exporter.OtlpExportProtocol.HttpProtobuf;
+                });
             });
         }
     });
