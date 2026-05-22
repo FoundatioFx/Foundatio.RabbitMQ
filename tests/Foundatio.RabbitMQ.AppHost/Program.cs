@@ -32,33 +32,23 @@ for (int nodeIndex = 0; nodeIndex < 3; nodeIndex++)
 }
 
 var chaos1Amqp = chaosNodes[0].GetEndpoint("amqp");
-var chaos2Amqp = chaosNodes[1].GetEndpoint("amqp");
-var chaos3Amqp = chaosNodes[2].GetEndpoint("amqp");
 
 builder.AddProject<Foundatio_RabbitMQ_Publish>("publisher")
     .WaitFor(chaosNodes[0])
-    .WaitFor(chaosNodes[1])
-    .WaitFor(chaosNodes[2])
     .WithArgs("--interval", "2000", "--publisher-confirms", "--durable")
     .WithEnvironment(context =>
     {
         context.EnvironmentVariables["ConnectionStrings__messaging"] =
             ReferenceExpression.Create($"amqp://guest:guest@{chaos1Amqp.Property(EndpointProperty.Host)}:{chaos1Amqp.Property(EndpointProperty.Port)}");
-        context.EnvironmentVariables["RABBITMQ_HOSTS"] =
-            ReferenceExpression.Create($"{chaos1Amqp.Property(EndpointProperty.Host)}:{chaos1Amqp.Property(EndpointProperty.Port)},{chaos2Amqp.Property(EndpointProperty.Host)}:{chaos2Amqp.Property(EndpointProperty.Port)},{chaos3Amqp.Property(EndpointProperty.Host)}:{chaos3Amqp.Property(EndpointProperty.Port)}");
     });
 
 builder.AddProject<Foundatio_RabbitMQ_Subscribe>("subscriber")
     .WaitFor(chaosNodes[0])
-    .WaitFor(chaosNodes[1])
-    .WaitFor(chaosNodes[2])
     .WithArgs("--durable")
     .WithEnvironment(context =>
     {
         context.EnvironmentVariables["ConnectionStrings__messaging"] =
             ReferenceExpression.Create($"amqp://guest:guest@{chaos1Amqp.Property(EndpointProperty.Host)}:{chaos1Amqp.Property(EndpointProperty.Port)}");
-        context.EnvironmentVariables["RABBITMQ_HOSTS"] =
-            ReferenceExpression.Create($"{chaos1Amqp.Property(EndpointProperty.Host)}:{chaos1Amqp.Property(EndpointProperty.Port)},{chaos2Amqp.Property(EndpointProperty.Host)}:{chaos2Amqp.Property(EndpointProperty.Port)},{chaos3Amqp.Property(EndpointProperty.Host)}:{chaos3Amqp.Property(EndpointProperty.Port)}");
     });
 
 foreach (var node in chaosNodes)
