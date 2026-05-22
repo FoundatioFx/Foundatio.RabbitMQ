@@ -10,7 +10,7 @@ namespace Foundatio.RabbitMQ.Tests;
 
 public class AspireFixture : IAsyncLifetime
 {
-    private static readonly Lazy<Task<DistributedApplication>> s_sharedApp = new(StartAppAsync, LazyThreadSafetyMode.ExecutionAndPublication);
+    private static readonly Lazy<Task<DistributedApplication>> _sharedApp = new(StartAppAsync, LazyThreadSafetyMode.ExecutionAndPublication);
 
     private DistributedApplication? _app;
     public DistributedApplication App => _app ?? throw new InvalidOperationException("Fixture not initialized");
@@ -19,7 +19,7 @@ public class AspireFixture : IAsyncLifetime
 
     public async ValueTask InitializeAsync()
     {
-        _app = await s_sharedApp.Value;
+        _app = await _sharedApp.Value;
 
         MessagingConnectionString = await _app.GetConnectionStringAsync("messaging")
             ?? throw new InvalidOperationException("Could not get messaging connection string");
