@@ -130,11 +130,17 @@ static async Task RunSubscriberAsync(
     using ILoggerFactory loggerFactory = LoggerFactory.Create(builder =>
     {
         builder.AddConsole().SetMinimumLevel(logLevel);
-        builder.AddOpenTelemetry(otel =>
+
+        var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
+        if (!string.IsNullOrEmpty(otlpEndpoint))
         {
-            otel.SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("subscriber"));
-            otel.AddOtlpExporter();
-        });
+            builder.AddOpenTelemetry(otel =>
+            {
+                otel.SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("subscriber"));
+                otel.IncludeFormattedMessage = true;
+                otel.AddOtlpExporter();
+            });
+        }
     });
     var logger = loggerFactory.CreateLogger("Subscriber");
 
