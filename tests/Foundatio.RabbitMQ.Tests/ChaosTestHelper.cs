@@ -1,6 +1,5 @@
 using System;
 using System.Diagnostics;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Aspire.Hosting;
@@ -92,16 +91,19 @@ public class ChaosTestHelper
             $"{flags} --filter \"name={resourceName}\"",
             cancellationToken);
 
-        var containerId = output.Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-        if (string.IsNullOrEmpty(containerId))
+        var containerIds = output.Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        if (containerIds.Length == 0)
             throw new InvalidOperationException($"Container for resource '{resourceName}' not found");
 
-        return containerId;
+        if (containerIds.Length > 1)
+            _logger.LogWarning("Multiple containers matched '{Resource}', using first: {ContainerId}", resourceName, containerIds[0]);
+
+        return containerIds[0].Trim();
     }
 
     private static Task<string> DockerExecAsync(string containerId, string command, CancellationToken cancellationToken)
     {
-        return RunDockerCommandAsync($"exec {containerId} sh -c \"{command}\"", cancellationToken);
+        return RunDockerCommandAsync($"exec {containerId} {command}", cancellationToken);
     }
 
     private static async Task<string> RunDockerCommandAsync(string args, CancellationToken cancellationToken)
@@ -118,15 +120,24 @@ public class ChaosTestHelper
         };
 
         process.Start();
-        var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
-        await Task.WhenAll(outputTask, errorTask);
-        await process.WaitForExitAsync(cancellationToken);
 
-        if (process.ExitCode != 0)
-            throw new InvalidOperationException(
-                $"docker {args} failed (exit code {process.ExitCode}): {await errorTask}");
+        try
+        {
+            var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+            var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+            await Task.WhenAll(outputTask, errorTask);
+            await process.WaitForExitAsync(cancellationToken);
 
-        return await outputTask;
+            if (process.ExitCode != 0)
+                throw new InvalidOperationException(
+                    $"docker {args} failed (exit code {process.ExitCode}): {await errorTask}");
+
+            return await outputTask;
+        }
+        catch (OperationCanceledException)
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+            throw;
+        }
     }
 }

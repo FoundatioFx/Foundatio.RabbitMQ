@@ -141,7 +141,8 @@ static async Task DockerExecAsync(string resourceName, string command)
     if (String.IsNullOrWhiteSpace(containerId))
         throw new InvalidOperationException($"Container '{resourceName}' not found");
 
-    await RunDockerAsync($"exec {containerId.Trim()} sh -c \"{command}\"");
+    var trimmedId = containerId.Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries)[0];
+    await RunDockerAsync($"exec {trimmedId} {command}");
 }
 
 static async Task<string> RunDockerAsync(string args)
@@ -158,12 +159,13 @@ static async Task<string> RunDockerAsync(string args)
     };
     process.Start();
 
-    string output = await process.StandardOutput.ReadToEndAsync();
-    string error = await process.StandardError.ReadToEndAsync();
+    var outputTask = process.StandardOutput.ReadToEndAsync();
+    var errorTask = process.StandardError.ReadToEndAsync();
+    await Task.WhenAll(outputTask, errorTask);
     await process.WaitForExitAsync();
 
     if (process.ExitCode != 0)
-        throw new InvalidOperationException($"docker {args} failed: {error.Trim()}");
+        throw new InvalidOperationException($"docker {args} failed: {(await errorTask).Trim()}");
 
-    return output;
+    return await outputTask;
 }

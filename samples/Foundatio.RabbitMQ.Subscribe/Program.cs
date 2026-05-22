@@ -255,7 +255,7 @@ static async Task RunSubscriberAsync(
             while (!cts.Token.IsCancellationRequested)
             {
                 await Task.Delay(TimeSpan.FromSeconds(10), cts.Token);
-                int current = Volatile.Read(ref totalProcessed);
+                int current = Interlocked.CompareExchange(ref totalProcessed, 0, 0);
                 int delta = current - lastProcessed;
                 lastProcessed = current;
                 logger.LogInformation("Stats | Processed: {Total} | Last 10s: +{Delta} | Rate: {Rate}/s | Uptime: {Uptime:hh\\:mm\\:ss}",
