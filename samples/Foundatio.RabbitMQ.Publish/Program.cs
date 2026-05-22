@@ -237,9 +237,9 @@ static async Task RunPublisher(
         logger.LogInformation("Auto-send mode enabled. Press Ctrl+C to stop.");
         int orderCount = 0;
 
-        try
+        while (true)
         {
-            while (true)
+            try
             {
                 ++orderCount;
                 var order = OrderEvent.Create(orderCount, messageSize);
@@ -257,18 +257,20 @@ static async Task RunPublisher(
                     logger.LogInformation("Order #{Seq} | {OrderId} | Customer: {Customer} | ${Amount}",
                         orderCount, order.OrderId, order.CustomerId, order.Amount);
                 }
-
-                await Task.Delay(interval);
             }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Publish failed (order #{Seq}), retrying in {Interval}ms...", orderCount, interval);
+            }
+
+            await Task.Delay(interval);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            logger.LogError(ex, "Error in auto-send loop");
-        }
-        finally
-        {
-            logger.LogInformation("Exiting. Total orders sent: {Count}", orderCount);
-        }
+
+        logger.LogInformation("Exiting. Total orders sent: {Count}", orderCount);
     }
     else
     {
