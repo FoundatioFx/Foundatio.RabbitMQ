@@ -63,10 +63,9 @@ public class ChaosTestHelper
                 return;
             await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
         }
-        throw new TimeoutException($"Disk alarm on '{resourceName}' did not activate within {timeout.TotalSeconds}s");
-    }
 
-    public async Task WaitForAlarmClearedAsync(string resourceName, TimeSpan timeout, CancellationToken cancellationToken = default)
+        throw new TimeoutException($"Disk alarm on '{resourceName}' did not activate within {timeout.TotalSeconds}s");
+    }    public async Task WaitForAlarmClearedAsync(string resourceName, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
@@ -75,6 +74,7 @@ public class ChaosTestHelper
                 return;
             await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
         }
+
         throw new TimeoutException($"Disk alarm on '{resourceName}' did not clear within {timeout.TotalSeconds}s");
     }
 
