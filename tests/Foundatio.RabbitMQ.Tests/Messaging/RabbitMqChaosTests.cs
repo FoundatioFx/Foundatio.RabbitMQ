@@ -23,6 +23,7 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
         var connectionString = Chaos.GetConnectionString("chaos-1");
         var messageBus = new RabbitMQMessageBus(o => o
             .ConnectionString(connectionString)
+            .Topic("chaos-disk-alarm-test-" + Guid.NewGuid().ToString("N")[..8])
             .LoggerFactory(Log));
 
         try
@@ -37,9 +38,9 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
             var publishTask = messageBus.PublishAsync(new SimpleMessageA { Data = "during alarm" },
                 cancellationToken: publishCts.Token);
 
-            // Assert - publish should block or fail while alarm is active
-            var completed = publishTask.IsCompleted;
-            _logger.LogInformation("Publish completed immediately: {Completed}", completed);
+            // Assert - publish should not complete immediately while alarm is active
+            await Task.Delay(TimeSpan.FromSeconds(1), TestCancellationToken);
+            _logger.LogInformation("Publish completed after 1s: {Completed}", publishTask.IsCompleted);
 
             await Chaos.ClearDiskAsync("chaos-1", TestCancellationToken);
             await Chaos.WaitForAlarmClearedAsync("chaos-1", TimeSpan.FromSeconds(30), TestCancellationToken);
@@ -180,6 +181,7 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
             }
 
             _logger.LogInformation("Failover publish result: published={Published}", published);
+            Assert.True(published, "Should be able to publish via failover to a healthy node");
         }
         finally
         {

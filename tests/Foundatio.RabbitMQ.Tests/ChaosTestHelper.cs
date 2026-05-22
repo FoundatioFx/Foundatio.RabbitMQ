@@ -51,9 +51,8 @@ public class ChaosTestHelper
     public async Task<bool> HasDiskAlarmAsync(string resourceName, CancellationToken cancellationToken = default)
     {
         var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
-        var output = await DockerExecAsync(containerId, "rabbitmqctl status --formatter json", cancellationToken);
-        return output.Contains("disk", StringComparison.OrdinalIgnoreCase) &&
-               output.Contains("\"resource\"", StringComparison.OrdinalIgnoreCase);
+        var output = await DockerExecAsync(containerId, "rabbitmqctl list_alarms --formatter json", cancellationToken);
+        return output.Contains("disk", StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task WaitForAlarmActiveAsync(string resourceName, TimeSpan timeout, CancellationToken cancellationToken = default)
