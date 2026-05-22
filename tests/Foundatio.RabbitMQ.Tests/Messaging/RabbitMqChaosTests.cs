@@ -22,7 +22,7 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
     {
         // Arrange
         var connectionString = Chaos.GetConnectionString("chaos-1");
-        var messageBus = new RabbitMQMessageBus(o => o
+        await using var messageBus = new RabbitMQMessageBus(o => o
             .ConnectionString(connectionString)
             .Topic("chaos-disk-alarm-test-" + Guid.NewGuid().ToString("N")[..8])
             .LoggerFactory(Log));
@@ -53,7 +53,6 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
         finally
         {
             await Chaos.ClearDiskAsync("chaos-1", TestCancellationToken);
-            await messageBus.DisposeAsync();
         }
     }
 
