@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.CommandLine;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -246,9 +247,20 @@ static async Task RunSubscriberAsync(
             cts.Cancel();
         };
 
+        var statsTimer = Stopwatch.StartNew();
+        int lastProcessed = 0;
+
         try
         {
-            await Task.Delay(Timeout.Infinite, cts.Token);
+            while (!cts.Token.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(10), cts.Token);
+                int current = Volatile.Read(ref totalProcessed);
+                int delta = current - lastProcessed;
+                lastProcessed = current;
+                logger.LogInformation("Stats | Processed: {Total} | Last 10s: +{Delta} | Rate: {Rate}/s | Uptime: {Uptime:hh\\:mm\\:ss}",
+                    current, delta, (delta / 10.0).ToString("F1"), statsTimer.Elapsed);
+            }
         }
         catch (OperationCanceledException) { }
     }

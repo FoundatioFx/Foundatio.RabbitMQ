@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.CommandLine;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using Foundatio.Messaging;
@@ -233,9 +234,11 @@ static async Task RunPublisher(
 
     if (interval > 0)
     {
-        // Auto-send mode
         logger.LogInformation("Auto-send mode enabled. Press Ctrl+C to stop.");
         int orderCount = 0;
+        int successCount = 0;
+        int failCount = 0;
+        var statsTimer = Stopwatch.StartNew();
 
         while (true)
         {
@@ -246,17 +249,12 @@ static async Task RunPublisher(
 
                 TimeSpan? delay = delaySeconds > 0 ? TimeSpan.FromSeconds(delaySeconds) : null;
                 if (delay.HasValue)
-                {
                     await messageBus.PublishAsync(order, delay.Value);
-                    logger.LogInformation("Order #{Seq} | {OrderId} | Customer: {Customer} | ${Amount} | {Delay}s delay",
-                        orderCount, order.OrderId, order.CustomerId, order.Amount, delaySeconds);
-                }
                 else
-                {
                     await messageBus.PublishAsync(order);
-                    logger.LogInformation("Order #{Seq} | {OrderId} | Customer: {Customer} | ${Amount}",
-                        orderCount, order.OrderId, order.CustomerId, order.Amount);
-                }
+
+                ++successCount;
+                logger.LogInformation("Order #{Seq} | {OrderId} | ${Amount}", orderCount, order.OrderId, order.Amount);
             }
             catch (OperationCanceledException)
             {
@@ -264,13 +262,21 @@ static async Task RunPublisher(
             }
             catch (Exception ex)
             {
+                ++failCount;
                 logger.LogWarning(ex, "Publish failed (order #{Seq}), retrying in {Interval}ms...", orderCount, interval);
+            }
+
+            if (statsTimer.Elapsed >= TimeSpan.FromSeconds(10))
+            {
+                logger.LogInformation("Stats | Sent: {Success} | Failed: {Failed} | Total: {Total} | Uptime: {Uptime:hh\\:mm\\:ss}",
+                    successCount, failCount, orderCount, statsTimer.Elapsed);
+                statsTimer.Restart();
             }
 
             await Task.Delay(interval);
         }
 
-        logger.LogInformation("Exiting. Total orders sent: {Count}", orderCount);
+        logger.LogInformation("Exiting | Sent: {Success} | Failed: {Failed} | Total: {Total}", successCount, failCount, orderCount);
     }
     else
     {
