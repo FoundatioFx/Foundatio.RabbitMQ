@@ -124,7 +124,7 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
                     cancellationToken: cts.Token);
                 published = true;
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Foundatio.Messaging.MessageBusException ex)
             {
                 _logger.LogWarning(ex, "Publish failed during recovery, retrying...");
                 await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
@@ -170,7 +170,7 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
                         cancellationToken: cts.Token);
                     published = true;
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Foundatio.Messaging.MessageBusException ex)
                 {
                     _logger.LogWarning(ex, "Publish attempt failed, retrying...");
                     await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
@@ -235,7 +235,7 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
                     cancellationToken: recoveryCts.Token);
                 published = true;
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Foundatio.Messaging.MessageBusException ex)
             {
                 _logger.LogWarning(ex, "Publish still failing during recovery, retrying...");
                 await Task.Delay(TimeSpan.FromSeconds(2), recoveryCts.Token);
@@ -325,7 +325,7 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
                 await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
                 messageReceived = received.Contains("after-kill");
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Foundatio.Messaging.MessageBusException ex)
             {
                 _logger.LogWarning(ex, "Publish/subscribe still recovering...");
                 await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
@@ -372,7 +372,7 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
                     cancellationToken: cts.Token);
                 published = true;
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Foundatio.Messaging.MessageBusException ex)
             {
                 _logger.LogWarning(ex, "Still recovering from flapping...");
                 await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
