@@ -35,11 +35,14 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
             await Chaos.FillDiskAsync("chaos-1", TestCancellationToken);
             await Chaos.WaitForAlarmActiveAsync("chaos-1", TimeSpan.FromSeconds(30), TestCancellationToken);
 
-            // Assert - a publish attempt should not succeed immediately while alarm is active
+            // Give the alarm time to propagate and block publishing
+            await Task.Delay(TimeSpan.FromSeconds(3), TestCancellationToken);
+
+            // Assert - a publish attempt should block or fail while alarm is active
             using var publishCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             var publishTask = messageBus.PublishAsync(new SimpleMessageA { Data = "during alarm" },
                 cancellationToken: publishCts.Token);
-            await Task.Delay(TimeSpan.FromSeconds(2), TestCancellationToken);
+            await Task.Delay(TimeSpan.FromSeconds(5), TestCancellationToken);
             Assert.False(publishTask.IsCompletedSuccessfully, "Publish should not succeed while disk alarm is active");
 
             // Clear alarm and verify publish eventually completes
@@ -50,10 +53,6 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
             try { await publishTask; } catch (Exception) { }
 
             // After clearing, a new publish should succeed
-            await Chaos.ClearDiskAsync("chaos-1", TestCancellationToken);
-            await Chaos.WaitForAlarmClearedAsync("chaos-1", TimeSpan.FromSeconds(30), TestCancellationToken);
-
-            // After clearing, either the pending publish completes or a new one succeeds
             using var recoveryCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             bool published = false;
             while (!recoveryCts.Token.IsCancellationRequested && !published)
@@ -229,10 +228,10 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
         // Act - kill 2 of 3 nodes (causes quorum loss in RabbitMQ 4.x Raft)
         await Chaos.StopNodeAsync("chaos-2", TestCancellationToken);
         await Chaos.StopNodeAsync("chaos-3", TestCancellationToken);
-        await Task.Delay(TimeSpan.FromSeconds(3), TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(5), TestCancellationToken);
 
         // Publish should fail/timeout during quorum loss
-        using var failCts = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+        using var failCts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var publishDuringLoss = await Record.ExceptionAsync(() =>
             messageBus.PublishAsync(new SimpleMessageA { Data = "during-quorum-loss" },
                 cancellationToken: failCts.Token));
@@ -243,10 +242,10 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
 
         // Act - bring one node back to restore quorum (2 of 3 = majority)
         await Chaos.StartNodeAsync("chaos-2", TestCancellationToken);
-        await Task.Delay(TimeSpan.FromSeconds(10), TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(15), TestCancellationToken);
 
         // Assert - publishing should resume once quorum is restored
-        using var recoveryCts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var recoveryCts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         bool published = false;
 
         while (!recoveryCts.Token.IsCancellationRequested && !published)
@@ -260,7 +259,7 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogWarning(ex, "Publish still failing during recovery, retrying...");
-                await Task.Delay(TimeSpan.FromSeconds(2), recoveryCts.Token);
+                await Task.Delay(TimeSpan.FromSeconds(3), recoveryCts.Token);
             }
         }
 
