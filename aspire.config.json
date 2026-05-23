@@ -1,0 +1,5 @@
+{
+  "appHost": {
+    "path": "tests/Foundatio.RabbitMQ.AppHost/Foundatio.RabbitMQ.AppHost.csproj"
+  }
+}
