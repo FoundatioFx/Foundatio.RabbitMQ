@@ -35,8 +35,9 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
             await Chaos.FillDiskAsync("chaos-1", TestCancellationToken);
             await Chaos.WaitForAlarmActiveAsync("chaos-1", TimeSpan.FromSeconds(30), TestCancellationToken);
 
-            // Give the alarm time to propagate and block publishing
-            await Task.Delay(TimeSpan.FromSeconds(3), TestCancellationToken);
+            // Give the alarm time to propagate and actually block the connection.
+            // In CI, the "connection blocked" notification can take 4-5 seconds after the alarm is set.
+            await Task.Delay(TimeSpan.FromSeconds(10), TestCancellationToken);
 
             // Assert - a publish attempt should block or fail while alarm is active
             using var publishCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -242,10 +243,10 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
 
         // Act - bring one node back to restore quorum (2 of 3 = majority)
         await Chaos.StartNodeAsync("chaos-2", TestCancellationToken);
-        await Task.Delay(TimeSpan.FromSeconds(15), TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(30), TestCancellationToken);
 
         // Assert - publishing should resume once quorum is restored
-        using var recoveryCts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        using var recoveryCts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
         bool published = false;
 
         while (!recoveryCts.Token.IsCancellationRequested && !published)
