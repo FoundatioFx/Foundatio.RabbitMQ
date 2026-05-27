@@ -65,7 +65,9 @@ public class ChaosTestHelper
         }
 
         throw new TimeoutException($"Disk alarm on '{resourceName}' did not activate within {timeout.TotalSeconds}s");
-    }    public async Task WaitForAlarmClearedAsync(string resourceName, TimeSpan timeout, CancellationToken cancellationToken = default)
+    }
+
+    public async Task WaitForAlarmClearedAsync(string resourceName, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
@@ -76,6 +78,27 @@ public class ChaosTestHelper
         }
 
         throw new TimeoutException($"Disk alarm on '{resourceName}' did not clear within {timeout.TotalSeconds}s");
+    }
+
+    public async Task TriggerMemoryAlarmAsync(string resourceName, CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("Setting vm_memory_high_watermark to 0.0001 on {Resource} to trigger memory alarm", resourceName);
+        var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
+        await DockerExecAsync(containerId, "rabbitmqctl set_vm_memory_high_watermark 0.0001", cancellationToken);
+    }
+
+    public async Task ClearMemoryAlarmAsync(string resourceName, CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("Resetting vm_memory_high_watermark to 0.8 on {Resource}", resourceName);
+        var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
+        await DockerExecAsync(containerId, "rabbitmqctl set_vm_memory_high_watermark 0.8", cancellationToken);
+    }
+
+    public async Task CloseAllConnectionsAsync(string resourceName, CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("Force-closing all connections on {Resource}", resourceName);
+        var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
+        await DockerExecAsync(containerId, "rabbitmqctl close_all_connections chaos-test", cancellationToken);
     }
 
     public string GetConnectionString(string resourceName)

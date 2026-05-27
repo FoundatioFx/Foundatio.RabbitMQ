@@ -80,6 +80,12 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
             Uri = primaryUri,
             AutomaticRecoveryEnabled = true
         };
+
+        if (options.RequestedHeartbeat.HasValue)
+            _factory.RequestedHeartbeat = options.RequestedHeartbeat.Value;
+
+        if (options.NetworkRecoveryInterval.HasValue)
+            _factory.NetworkRecoveryInterval = options.NetworkRecoveryInterval.Value;
     }
 
     public RabbitMQMessageBus(Builder<RabbitMQMessageBusOptionsBuilder, RabbitMQMessageBusOptions> config)
@@ -769,13 +775,33 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
     /// <param name="channel">channel</param>
     private async Task<string> CreateQueueAsync(IChannel channel)
     {
-        // Set up the queue where the messages will reside - it requires the queue name and durability.
-        // Durable (the queue will survive a broker restart)
-        // Arguments (some brokers use it to implement additional features like message TTL)
-        var result = await channel.QueueDeclareAsync(_options.SubscriptionQueueName, _options.IsDurable, _options.IsSubscriptionQueueExclusive, _options.SubscriptionQueueAutoDelete, _options.Arguments).AnyContext();
+        var arguments = _options.Arguments is not null
+            ? new Dictionary<string, object?>(_options.Arguments)
+            : new Dictionary<string, object?>();
+
+        if (!String.IsNullOrWhiteSpace(_options.DeadLetterExchange))
+        {
+            arguments["x-dead-letter-exchange"] = _options.DeadLetterExchange;
+
+            if (!String.IsNullOrWhiteSpace(_options.DeadLetterRoutingKey))
+                arguments["x-dead-letter-routing-key"] = _options.DeadLetterRoutingKey;
+        }
+
+        if (_options.SingleActiveConsumer)
+            arguments["x-single-active-consumer"] = true;
+
+        if (!String.IsNullOrWhiteSpace(_options.DelayedRetryType))
+        {
+            arguments["x-delayed-retry-type"] = _options.DelayedRetryType;
+            if (_options.DelayedRetryMin.HasValue)
+                arguments["x-delayed-retry-min"] = _options.DelayedRetryMin.Value;
+            if (_options.DelayedRetryMax.HasValue)
+                arguments["x-delayed-retry-max"] = _options.DelayedRetryMax.Value;
+        }
+
+        var result = await channel.QueueDeclareAsync(_options.SubscriptionQueueName, _options.IsDurable, _options.IsSubscriptionQueueExclusive, _options.SubscriptionQueueAutoDelete, arguments.Count > 0 ? arguments : null).AnyContext();
         string queueName = result.QueueName;
 
-        // bind the queue with the exchange.
         await channel.QueueBindAsync(queueName, _options.Topic, "").AnyContext();
 
         return queueName;
