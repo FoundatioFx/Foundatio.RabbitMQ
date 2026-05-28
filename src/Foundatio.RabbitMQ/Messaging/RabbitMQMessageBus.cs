@@ -775,6 +775,9 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
     /// <param name="channel">channel</param>
     private async Task<string> CreateQueueAsync(IChannel channel)
     {
+        // Set up the queue where the messages will reside - it requires the queue name and durability.
+        // Durable (the queue will survive a broker restart)
+        // Arguments (some brokers use it to implement additional features like message TTL)
         var arguments = _options.Arguments is not null
             ? new Dictionary<string, object?>(_options.Arguments)
             : new Dictionary<string, object?>();
@@ -790,9 +793,12 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         if (_options.SingleActiveConsumer)
             arguments["x-single-active-consumer"] = true;
 
-        if (!String.IsNullOrWhiteSpace(_options.DelayedRetryType))
+        if (_options.DelayedRetryType.HasValue)
         {
-            arguments["x-delayed-retry-type"] = _options.DelayedRetryType;
+            if (!_isQuorumQueue)
+                throw new InvalidOperationException("Delayed retries (x-delayed-retry-*) require quorum queues (RabbitMQ 4.3+). Call UseQuorumQueues() before UseDelayedRetries().");
+
+            arguments["x-delayed-retry-type"] = _options.DelayedRetryType.Value.ToRabbitMQString();
             if (_options.DelayedRetryMin.HasValue)
                 arguments["x-delayed-retry-min"] = _options.DelayedRetryMin.Value;
             if (_options.DelayedRetryMax.HasValue)
@@ -802,7 +808,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         var result = await channel.QueueDeclareAsync(_options.SubscriptionQueueName, _options.IsDurable, _options.IsSubscriptionQueueExclusive, _options.SubscriptionQueueAutoDelete, arguments.Count > 0 ? arguments : null).AnyContext();
         string queueName = result.QueueName;
 
-        await channel.QueueBindAsync(queueName, _options.Topic, "").AnyContext();
+        // Bind the queue with the exchange.
+        await channel.QueueBindAsync(queueName, _options.Topic, String.Empty).AnyContext();
 
         return queueName;
     }

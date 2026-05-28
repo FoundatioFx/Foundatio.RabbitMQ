@@ -11,19 +11,16 @@ public class RabbitMqVersionGatingTests(AspireFixture fixture, ITestOutputHelper
     : TestWithLoggingBase(output), IClassFixture<AspireFixture>
 {
     [Fact]
-    public async Task SubscribeAsync_WithDeprecatedGlobalQos_FallsBackToPerChannelQos()
+    public async Task SubscribeAsync_WithPerChannelQos_DeliversMessages()
     {
         string topic = "versiongate-globalqos-" + Guid.NewGuid().ToString("N")[..8];
 
-#pragma warning disable CS0618
         await using var messageBus = new RabbitMQMessageBus(o => o
             .ConnectionString(fixture.MessagingConnectionString!)
             .Topic(topic)
             .PrefetchCount(10)
-            .GlobalQos(true)
             .UseQuorumQueues()
             .LoggerFactory(Log));
-#pragma warning restore CS0618
 
         string? receivedData = null;
         await messageBus.SubscribeAsync<SimpleMessageA>(msg =>

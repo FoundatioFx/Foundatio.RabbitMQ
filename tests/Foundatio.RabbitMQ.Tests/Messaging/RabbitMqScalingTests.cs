@@ -83,11 +83,8 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
         }
         finally
         {
-            foreach (var bus in buses)
-            {
-                if (bus is not null)
-                    await bus.DisposeAsync();
-            }
+            foreach (var bus in buses.OfType<RabbitMQMessageBus>())
+                await bus.DisposeAsync();
         }
     }
 
@@ -347,7 +344,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
 
         await using var publisher = new RabbitMQMessageBus(o => o
             .ConnectionString(host1)
-            .Hosts([$"{uri1.Host}:{uri1.Port}", $"{uri2.Host}:{uri2.Port}", $"{uri3.Host}:{uri3.Port}"])
+            .Hosts($"{uri1.Host}:{uri1.Port}", $"{uri2.Host}:{uri2.Port}", $"{uri3.Host}:{uri3.Port}")
             .Topic(topic)
             .PublisherConfirmsEnabled(true)
             .PublishRecoveryTimeout(TimeSpan.FromSeconds(30))
@@ -355,7 +352,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
 
         await using var subscriber = new RabbitMQMessageBus(o => o
             .ConnectionString(host1)
-            .Hosts([$"{uri1.Host}:{uri1.Port}", $"{uri2.Host}:{uri2.Port}", $"{uri3.Host}:{uri3.Port}"])
+            .Hosts($"{uri1.Host}:{uri1.Port}", $"{uri2.Host}:{uri2.Port}", $"{uri3.Host}:{uri3.Port}")
             .Topic(topic)
             .SubscriptionQueueName(queueName)
             .IsSubscriptionQueueExclusive(false)
@@ -395,7 +392,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
                 {
                     break;
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
                 {
                     _logger.LogWarning(ex, "Publish failed during rolling restart, retrying...");
                     await Task.Delay(TimeSpan.FromSeconds(2), publishCts.Token);
@@ -420,7 +417,11 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
         await Task.Delay(TimeSpan.FromSeconds(10), TestCancellationToken);
         await publishCts.CancelAsync();
 
-        try { await publishTask; } catch (OperationCanceledException) { }
+        try { await publishTask; }
+        catch (OperationCanceledException)
+        {
+            _logger.LogDebug("Publish task cancelled during shutdown (expected)");
+        }
 
         await Task.Delay(TimeSpan.FromSeconds(5), TestCancellationToken);
 
@@ -463,7 +464,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
             .PublisherConfirmsEnabled(true)
             .LoggerFactory(Log));
 
-        var subscriber1 = new RabbitMQMessageBus(o => o
+        RabbitMQMessageBus? subscriber1 = new RabbitMQMessageBus(o => o
             .ConnectionString(host3)
             .Hosts(allHosts)
             .Topic(topic)
@@ -497,6 +498,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
             _logger.LogInformation("Messages delivered to subscriber1 before kill: {Count}", firstDeliveries.Count);
 
             await subscriber1.DisposeAsync();
+            subscriber1 = null;
 
             await using var subscriber2 = new RabbitMQMessageBus(o => o
                 .ConnectionString(host1)
@@ -526,7 +528,8 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
         finally
         {
             holdGate.Set();
-            await subscriber1.DisposeAsync();
+            if (subscriber1 is not null)
+                await subscriber1.DisposeAsync();
         }
     }
 }

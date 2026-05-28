@@ -148,10 +148,10 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     /// When set, rejected/failed messages are held in a delayed state before becoming available again.
     /// The delay uses linear backoff: min(min_delay * delivery_count, max_delay).
     /// Requires quorum queues. Set via x-delayed-retry-type queue argument.
-    /// Values: "disabled", "all", "failed". Default: null (not configured).
+    /// Default: null (not configured).
     /// See: https://www.rabbitmq.com/docs/quorum-queues#delayed-retries
     /// </summary>
-    public string? DelayedRetryType { get; set; }
+    public DelayedRetryType? DelayedRetryType { get; set; }
 
     /// <summary>
     /// Minimum delay in milliseconds for native delayed retry (RabbitMQ 4.3+).
@@ -373,15 +373,11 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
     /// </summary>
     /// <param name="minDelayMs">Minimum delay in milliseconds (multiplied by delivery count).</param>
     /// <param name="maxDelayMs">Maximum delay cap in milliseconds.</param>
-    /// <param name="retryType">Retry type: "all" (all returns delayed) or "failed" (only failed deliveries delayed). Default: "all".</param>
-    public RabbitMQMessageBusOptionsBuilder UseDelayedRetries(int minDelayMs = 1000, int maxDelayMs = 60000, string retryType = "all")
+    /// <param name="retryType">Retry type controlling which messages are delayed. Default: All.</param>
+    public RabbitMQMessageBusOptionsBuilder UseDelayedRetries(int minDelayMs = 1000, int maxDelayMs = 60000, DelayedRetryType retryType = DelayedRetryType.All)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(minDelayMs, 0);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxDelayMs, 0);
-        ArgumentException.ThrowIfNullOrWhiteSpace(retryType);
-
-        if (retryType is not ("all" or "failed" or "disabled"))
-            throw new ArgumentException($"retryType must be 'all', 'failed', or 'disabled', got '{retryType}'", nameof(retryType));
 
         if (maxDelayMs < minDelayMs)
             throw new ArgumentOutOfRangeException(nameof(maxDelayMs), $"maxDelayMs ({maxDelayMs}) must be >= minDelayMs ({minDelayMs})");

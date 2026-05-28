@@ -87,11 +87,13 @@ public class ChaosTestHelper
         await DockerExecAsync(containerId, "rabbitmqctl set_vm_memory_high_watermark 0.0001", cancellationToken);
     }
 
+    private const string DefaultMemoryWatermark = "0.8";
+
     public async Task ClearMemoryAlarmAsync(string resourceName, CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Resetting vm_memory_high_watermark to 0.8 on {Resource}", resourceName);
+        _logger.LogInformation("Resetting vm_memory_high_watermark to broker default ({Watermark}) on {Resource}", DefaultMemoryWatermark, resourceName);
         var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
-        await DockerExecAsync(containerId, "rabbitmqctl set_vm_memory_high_watermark 0.8", cancellationToken);
+        await DockerExecAsync(containerId, $"rabbitmqctl set_vm_memory_high_watermark {DefaultMemoryWatermark}", cancellationToken);
     }
 
     public async Task CloseAllConnectionsAsync(string resourceName, CancellationToken cancellationToken = default)
