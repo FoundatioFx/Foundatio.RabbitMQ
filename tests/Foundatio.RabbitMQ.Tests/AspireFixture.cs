@@ -64,7 +64,7 @@ public class AspireFixture : IAsyncLifetime
         {
             var appHost = await DistributedApplicationTestingBuilder
                 .CreateAsync<Projects.Foundatio_RabbitMQ_AppHost>()
-                .WaitAsync(TimeSpan.FromMinutes(2));
+                .WaitAsync(TimeSpan.FromMinutes(5));
 
             var app = await appHost.BuildAsync()
                 .WaitAsync(TimeSpan.FromMinutes(1));
@@ -73,7 +73,7 @@ public class AspireFixture : IAsyncLifetime
             await app.StartAsync(startCts.Token);
 
             await app.ResourceNotifications.WaitForResourceHealthyAsync("messaging")
-                .WaitAsync(TimeSpan.FromSeconds(60));
+                .WaitAsync(TimeSpan.FromSeconds(120));
 
             return app;
         }
