@@ -156,6 +156,9 @@ public class ChaosTestHelper
 
     private static async Task<string> RunDockerCommandAsync(string args, CancellationToken cancellationToken)
     {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
+
         using var process = new Process();
         process.StartInfo = new ProcessStartInfo
         {
@@ -171,10 +174,10 @@ public class ChaosTestHelper
 
         try
         {
-            var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-            var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+            var outputTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+            var errorTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
             await Task.WhenAll(outputTask, errorTask);
-            await process.WaitForExitAsync(cancellationToken);
+            await process.WaitForExitAsync(timeoutCts.Token);
 
             if (process.ExitCode != 0)
                 throw new InvalidOperationException(
