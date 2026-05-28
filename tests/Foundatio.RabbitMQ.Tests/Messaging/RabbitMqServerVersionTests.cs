@@ -105,7 +105,7 @@ public class RabbitMqServerVersionTests
     }
 
     [Fact]
-    public void ParseServerVersion_WithExactThreshold_DetectsAsAtOrAbove()
+    public void VersionComparison_WithExactThreshold_DetectsAsAtOrAbove()
     {
         // Arrange
         var rmq43 = new Version(4, 3, 0);
@@ -119,7 +119,7 @@ public class RabbitMqServerVersionTests
     }
 
     [Fact]
-    public void ParseServerVersion_WithHigherMajor_DetectsAsAbove()
+    public void VersionComparison_WithHigherMajor_DetectsAsAbove()
     {
         // Arrange
         var rmq50 = new Version(5, 0, 0);

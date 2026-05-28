@@ -14,7 +14,8 @@ namespace Foundatio.RabbitMQ.Tests.Messaging;
 public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
     : TestWithLoggingBase(output), IClassFixture<AspireFixture>
 {
-    private ChaosTestHelper Chaos => field ??= new(fixture.App, Log);
+    private ChaosTestHelper? _chaos;
+    private ChaosTestHelper Chaos => _chaos ??= new(fixture.App, Log);
 
     [Fact]
     public async Task PublishAsync_DuringDiskAlarm_BlocksUntilAlarmClears()

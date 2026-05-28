@@ -1,6 +1,8 @@
 using System;
 using System.Threading.Tasks;
+using Foundatio.AsyncEx;
 using Foundatio.Messaging;
+using Foundatio.Tests.Extensions;
 using Foundatio.Tests.Messaging;
 using Foundatio.Xunit;
 using Xunit;
@@ -11,21 +13,26 @@ public class RabbitMqVersionGatingTests(AspireFixture fixture, ITestOutputHelper
     : TestWithLoggingBase(output), IClassFixture<AspireFixture>
 {
     [Fact]
-    public async Task SubscribeAsync_WithPerChannelQos_DeliversMessages()
+    public async Task SubscribeAsync_WithDeprecatedGlobalQos_FallsBackToPerChannelQos()
     {
         string topic = "versiongate-globalqos-" + Guid.NewGuid().ToString("N")[..8];
+        var messageReceived = new AsyncCountdownEvent(1);
+        string? receivedData = null;
 
+#pragma warning disable CS0618
         await using var messageBus = new RabbitMQMessageBus(o => o
             .ConnectionString(fixture.MessagingConnectionString!)
             .Topic(topic)
             .PrefetchCount(10)
+            .GlobalQos(true)
             .UseQuorumQueues()
             .LoggerFactory(Log));
+#pragma warning restore CS0618
 
-        string? receivedData = null;
         await messageBus.SubscribeAsync<SimpleMessageA>(msg =>
         {
             receivedData = msg.Data;
+            messageReceived.Signal();
         }, TestCancellationToken);
 
         await Task.Delay(TimeSpan.FromSeconds(1), TestCancellationToken);
@@ -33,7 +40,7 @@ public class RabbitMqVersionGatingTests(AspireFixture fixture, ITestOutputHelper
         await messageBus.PublishAsync(new SimpleMessageA { Data = "globalqos-fallback" },
             cancellationToken: TestCancellationToken);
 
-        await Task.Delay(TimeSpan.FromSeconds(3), TestCancellationToken);
+        await messageReceived.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal("globalqos-fallback", receivedData);
     }
 
@@ -41,6 +48,8 @@ public class RabbitMqVersionGatingTests(AspireFixture fixture, ITestOutputHelper
     public async Task PublishAsync_WithConfirmsAndVersionDetection_DeliversSuccessfully()
     {
         string topic = "versiongate-confirms-" + Guid.NewGuid().ToString("N")[..8];
+        var messageReceived = new AsyncCountdownEvent(1);
+        string? receivedData = null;
 
         await using var messageBus = new RabbitMQMessageBus(o => o
             .ConnectionString(fixture.MessagingConnectionString!)
@@ -49,10 +58,10 @@ public class RabbitMqVersionGatingTests(AspireFixture fixture, ITestOutputHelper
             .UseQuorumQueues()
             .LoggerFactory(Log));
 
-        string? receivedData = null;
         await messageBus.SubscribeAsync<SimpleMessageA>(msg =>
         {
             receivedData = msg.Data;
+            messageReceived.Signal();
         }, TestCancellationToken);
 
         await Task.Delay(TimeSpan.FromSeconds(1), TestCancellationToken);
@@ -60,7 +69,7 @@ public class RabbitMqVersionGatingTests(AspireFixture fixture, ITestOutputHelper
         await messageBus.PublishAsync(new SimpleMessageA { Data = "confirmed" },
             cancellationToken: TestCancellationToken);
 
-        await Task.Delay(TimeSpan.FromSeconds(3), TestCancellationToken);
+        await messageReceived.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal("confirmed", receivedData);
     }
 
@@ -68,6 +77,8 @@ public class RabbitMqVersionGatingTests(AspireFixture fixture, ITestOutputHelper
     public async Task SubscribeAsync_WithQuorumQueueAndDeliveryLimit_DeliversMessages()
     {
         string topic = "versiongate-delivery-" + Guid.NewGuid().ToString("N")[..8];
+        var messageReceived = new AsyncCountdownEvent(1);
+        string? receivedData = null;
 
         await using var messageBus = new RabbitMQMessageBus(o => o
             .ConnectionString(fixture.MessagingConnectionString!)
@@ -76,10 +87,10 @@ public class RabbitMqVersionGatingTests(AspireFixture fixture, ITestOutputHelper
             .DeliveryLimit(3)
             .LoggerFactory(Log));
 
-        string? receivedData = null;
         await messageBus.SubscribeAsync<SimpleMessageA>(msg =>
         {
             receivedData = msg.Data;
+            messageReceived.Signal();
         }, TestCancellationToken);
 
         await Task.Delay(TimeSpan.FromSeconds(1), TestCancellationToken);
@@ -87,7 +98,7 @@ public class RabbitMqVersionGatingTests(AspireFixture fixture, ITestOutputHelper
         await messageBus.PublishAsync(new SimpleMessageA { Data = "delivery-limit" },
             cancellationToken: TestCancellationToken);
 
-        await Task.Delay(TimeSpan.FromSeconds(3), TestCancellationToken);
+        await messageReceived.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal("delivery-limit", receivedData);
     }
 }
