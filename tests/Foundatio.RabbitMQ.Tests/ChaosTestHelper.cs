@@ -62,10 +62,6 @@ public class ChaosTestHelper
                 if (output.Contains("pid", StringComparison.OrdinalIgnoreCase))
                     return;
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
             catch (OperationCanceledException)
             {
                 break;
