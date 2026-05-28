@@ -276,7 +276,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
                         cancellationToken: cts.Token);
                     published = true;
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception ex) when (ex is not OperationCanceledException and not OutOfMemoryException and not StackOverflowException)
                 {
                     await Task.Delay(TimeSpan.FromSeconds(1), cts.Token);
                 }
@@ -329,7 +329,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
                 await Task.Delay(TimeSpan.FromSeconds(1), cts.Token);
                 messageReceived = received.Contains("after-force-close");
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException and not OutOfMemoryException and not StackOverflowException)
             {
                 _logger.LogWarning(ex, "Still recovering from force-close...");
                 await Task.Delay(TimeSpan.FromSeconds(1), cts.Token);

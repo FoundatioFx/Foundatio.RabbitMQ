@@ -59,7 +59,10 @@ public class ChaosTestHelper
                 if (output.Contains("pid", StringComparison.OrdinalIgnoreCase))
                     return;
             }
-            catch { }
+            catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
+            {
+                // Expected: node not ready yet (container starting, rabbitmqctl unavailable)
+            }
 
             await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
         }

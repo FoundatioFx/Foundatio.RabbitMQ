@@ -38,7 +38,7 @@ public class AspireFixture : IAsyncLifetime
             var delayedEndpoint = _app.GetEndpoint("messaging-delayed", "amqp");
             MessagingDelayedConnectionString = $"amqp://guest:guest@{delayedEndpoint.Host}:{delayedEndpoint.Port}";
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
         {
             MessagingDelayedConnectionString = null;
         }
@@ -55,7 +55,7 @@ public class AspireFixture : IAsyncLifetime
             );
             ChaosClusterAvailable = true;
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
         {
             ChaosClusterAvailable = false;
         }
@@ -80,7 +80,7 @@ public class AspireFixture : IAsyncLifetime
 
             return app;
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
         {
             return null;
         }
