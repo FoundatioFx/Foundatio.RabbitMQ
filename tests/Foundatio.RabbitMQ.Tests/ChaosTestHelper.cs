@@ -49,22 +49,33 @@ public class ChaosTestHelper
 
     public async Task WaitForNodeReadyAsync(string resourceName, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
+        using var deadlineCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadlineCts.CancelAfter(timeout);
+        var linkedToken = deadlineCts.Token;
+
+        while (!linkedToken.IsCancellationRequested)
         {
             try
             {
-                var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
-                var output = await DockerExecAsync(containerId, "rabbitmqctl status", cancellationToken);
+                var containerId = await GetContainerIdAsync(resourceName, cancellationToken: linkedToken);
+                var output = await DockerExecAsync(containerId, "rabbitmqctl status", linkedToken);
                 if (output.Contains("pid", StringComparison.OrdinalIgnoreCase))
                     return;
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
             catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
             {
-                _logger.LogTrace(ex, "Node {Resource} not ready yet, retrying...", resourceName);
+                _logger.LogTrace(ex, "Node {Resource} not ready yet: {Message}, retrying...", resourceName, ex.Message);
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+            await Task.Delay(TimeSpan.FromSeconds(1), linkedToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
 
         throw new TimeoutException($"Node '{resourceName}' did not become ready within {timeout.TotalSeconds}s");
@@ -110,13 +121,13 @@ public class ChaosTestHelper
         await DockerExecAsync(containerId, "rabbitmqctl set_vm_memory_high_watermark 0.0001", cancellationToken);
     }
 
-    private const string DefaultMemoryWatermark = "0.8";
+    private const string TestResetMemoryWatermark = "0.8";
 
     public async Task ClearMemoryAlarmAsync(string resourceName, CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Resetting vm_memory_high_watermark to broker default ({Watermark}) on {Resource}", DefaultMemoryWatermark, resourceName);
+        _logger.LogInformation("Resetting vm_memory_high_watermark to test default ({Watermark}) on {Resource}", TestResetMemoryWatermark, resourceName);
         var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
-        await DockerExecAsync(containerId, $"rabbitmqctl set_vm_memory_high_watermark {DefaultMemoryWatermark}", cancellationToken);
+        await DockerExecAsync(containerId, $"rabbitmqctl set_vm_memory_high_watermark {TestResetMemoryWatermark}", cancellationToken);
     }
 
     public async Task CloseAllConnectionsAsync(string resourceName, CancellationToken cancellationToken = default)

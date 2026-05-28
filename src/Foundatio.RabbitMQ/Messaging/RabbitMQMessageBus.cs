@@ -826,6 +826,9 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
             if (!_isQuorumQueue)
                 throw new MessageBusException("Per-queue consumer timeout (x-consumer-timeout) requires quorum queues (RabbitMQ 4.3+). Call UseQuorumQueues() before ConsumerTimeout().");
 
+            if (_serverVersion is not null && _serverVersion < _delayedExchangePluginIncompatibleVersion)
+                throw new MessageBusException($"Per-queue consumer timeout (x-consumer-timeout) requires RabbitMQ 4.3+. Detected server version: {_serverVersion}.");
+
             arguments["x-consumer-timeout"] = (long)_options.ConsumerTimeout.Value.TotalMilliseconds;
         }
 
