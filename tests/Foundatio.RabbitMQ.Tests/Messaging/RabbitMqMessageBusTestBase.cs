@@ -17,6 +17,9 @@ public abstract class RabbitMqMessageBusTestBase(string connectionString, ITestO
 
     protected override IMessageBus? GetMessageBus(Func<SharedMessageBusOptions, SharedMessageBusOptions>? config = null)
     {
+        if (string.IsNullOrEmpty(ConnectionString))
+            return null;
+
         return new RabbitMQMessageBus(o =>
         {
             o.SubscriptionQueueName($"{_topic}_{Guid.NewGuid():N}");
@@ -244,6 +247,8 @@ public abstract class RabbitMqMessageBusTestBase(string connectionString, ITestO
     [Fact]
     public virtual async Task CanHandlePoisonedMessageWithAutomaticAcknowledgementsAsync()
     {
+        Assert.SkipWhen(string.IsNullOrEmpty(ConnectionString), "RabbitMQ infrastructure not available");
+
         string topic = $"test_topic_poisoned_{DateTime.UtcNow.Ticks}";
         await using var messageBus = new RabbitMQMessageBus(o => o
             .ConnectionString(ConnectionString)
@@ -278,6 +283,8 @@ public abstract class RabbitMqMessageBusTestBase(string connectionString, ITestO
     [Fact]
     public async Task CanPersistAndNotLoseMessages()
     {
+        Assert.SkipWhen(string.IsNullOrEmpty(ConnectionString), "RabbitMQ infrastructure not available");
+
         var messageBus1 = new RabbitMQMessageBus(o => o
             .ConnectionString(ConnectionString)
             .LoggerFactory(Log)

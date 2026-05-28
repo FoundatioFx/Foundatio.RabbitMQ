@@ -22,6 +22,8 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
     [Fact]
     public async Task SubscribeAsync_WithCompetingConsumers_DistributesMessagesAcrossAll()
     {
+        Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
+
         string topic = "scaling-competing-" + Guid.NewGuid().ToString("N")[..8];
         string queueName = $"{topic}-shared";
         const int messageCount = 50;
@@ -91,6 +93,8 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
     [Fact]
     public async Task SubscribeAsync_WithPrefetchLimit_OnlyDeliversUpToPrefetchCount()
     {
+        Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
+
         string topic = "scaling-prefetch-" + Guid.NewGuid().ToString("N")[..8];
         string queueName = $"{topic}-prefetch";
         const ushort prefetchCount = 2;
@@ -150,6 +154,8 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
     [Fact]
     public async Task PublishAsync_WithConfirmsEnabled_GuaranteesDeliveryToSubscriber()
     {
+        Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
+
         string topic = "scaling-confirms-" + Guid.NewGuid().ToString("N")[..8];
         string queueName = $"{topic}-confirmed";
         var received = new ConcurrentBag<string>();
@@ -189,6 +195,8 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
     [Fact]
     public async Task SubscribeAsync_WithMismatchedQueueArguments_ThrowsWithoutRetry()
     {
+        Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
+
         string topic = "scaling-mismatch-" + Guid.NewGuid().ToString("N")[..8];
         string queueName = $"{topic}-mismatch";
 
