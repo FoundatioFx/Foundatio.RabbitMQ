@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -644,11 +645,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         if (options.Properties.Count > 0)
         {
             basicProperties.Headers ??= new Dictionary<string, object?>();
-            foreach (var property in options.Properties)
+            foreach (var property in options.Properties.Where(p => !String.Equals(p.Key, PriorityPropertyKey, StringComparison.Ordinal)))
             {
-                if (String.Equals(property.Key, PriorityPropertyKey, StringComparison.Ordinal))
-                    continue;
-
                 basicProperties.Headers.Add(property.Key, property.Value);
             }
         }
