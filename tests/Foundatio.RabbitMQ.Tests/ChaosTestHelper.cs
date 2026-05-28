@@ -61,7 +61,7 @@ public class ChaosTestHelper
             }
             catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
             {
-                // Expected: node not ready yet (container starting, rabbitmqctl unavailable)
+                _logger.LogTrace(ex, "Node {Resource} not ready yet, retrying...", resourceName);
             }
 
             await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);

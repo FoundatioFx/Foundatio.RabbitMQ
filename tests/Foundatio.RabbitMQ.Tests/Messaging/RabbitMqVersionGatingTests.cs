@@ -17,6 +17,7 @@ public class RabbitMqVersionGatingTests(AspireFixture fixture, ITestOutputHelper
     {
         Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
 
+        // Arrange
         string topic = "versiongate-globalqos-" + Guid.NewGuid().ToString("N")[..8];
         string queueName = $"{topic}-queue";
         var messageReceived = new AsyncCountdownEvent(1);
@@ -41,9 +42,11 @@ public class RabbitMqVersionGatingTests(AspireFixture fixture, ITestOutputHelper
 
         await Task.Delay(TimeSpan.FromSeconds(1), TestCancellationToken);
 
+        // Act
         await messageBus.PublishAsync(new SimpleMessageA { Data = "globalqos-fallback" },
             cancellationToken: TestCancellationToken);
 
+        // Assert
         await messageReceived.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal("globalqos-fallback", receivedData);
     }
@@ -53,6 +56,7 @@ public class RabbitMqVersionGatingTests(AspireFixture fixture, ITestOutputHelper
     {
         Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
 
+        // Arrange
         string topic = "versiongate-confirms-" + Guid.NewGuid().ToString("N")[..8];
         string queueName = $"{topic}-queue";
         var messageReceived = new AsyncCountdownEvent(1);
@@ -74,9 +78,11 @@ public class RabbitMqVersionGatingTests(AspireFixture fixture, ITestOutputHelper
 
         await Task.Delay(TimeSpan.FromSeconds(1), TestCancellationToken);
 
+        // Act
         await messageBus.PublishAsync(new SimpleMessageA { Data = "confirmed" },
             cancellationToken: TestCancellationToken);
 
+        // Assert
         await messageReceived.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal("confirmed", receivedData);
     }
@@ -86,6 +92,7 @@ public class RabbitMqVersionGatingTests(AspireFixture fixture, ITestOutputHelper
     {
         Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
 
+        // Arrange
         string topic = "versiongate-delivery-" + Guid.NewGuid().ToString("N")[..8];
         string queueName = $"{topic}-queue";
         var messageReceived = new AsyncCountdownEvent(1);
@@ -107,9 +114,11 @@ public class RabbitMqVersionGatingTests(AspireFixture fixture, ITestOutputHelper
 
         await Task.Delay(TimeSpan.FromSeconds(1), TestCancellationToken);
 
+        // Act
         await messageBus.PublishAsync(new SimpleMessageA { Data = "delivery-limit" },
             cancellationToken: TestCancellationToken);
 
+        // Assert
         await messageReceived.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal("delivery-limit", receivedData);
     }

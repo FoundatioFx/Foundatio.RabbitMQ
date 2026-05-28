@@ -200,7 +200,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
         string topic = "scaling-mismatch-" + Guid.NewGuid().ToString("N")[..8];
         string queueName = $"{topic}-mismatch";
 
-        var classicBus = new RabbitMQMessageBus(o => o
+        await using var classicBus = new RabbitMQMessageBus(o => o
             .ConnectionString(fixture.MessagingConnectionString!)
             .Topic(topic)
             .SubscriptionQueueName(queueName)
@@ -211,7 +211,6 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
 
         await classicBus.SubscribeAsync<SimpleMessageA>(_ => { }, TestCancellationToken);
         await Task.Delay(TimeSpan.FromSeconds(2), TestCancellationToken);
-        await classicBus.DisposeAsync();
 
         var exception = await Record.ExceptionAsync(async () =>
         {

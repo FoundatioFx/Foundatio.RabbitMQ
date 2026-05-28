@@ -799,10 +799,10 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
                 if (_options.DeadLetterStrategy == DeadLetterStrategy.AtLeastOnce)
                 {
                     if (!_isQuorumQueue)
-                        throw new InvalidOperationException("At-least-once dead-lettering requires quorum queues. Call UseQuorumQueues().");
+                        throw new MessageBusException("At-least-once dead-lettering requires quorum queues. Call UseQuorumQueues().");
 
                     if (_options.Overflow != QueueOverflowBehavior.RejectPublish)
-                        throw new InvalidOperationException("At-least-once dead-lettering requires overflow to be set to RejectPublish. Call .OverflowBehavior(QueueOverflowBehavior.RejectPublish).");
+                        throw new MessageBusException("At-least-once dead-lettering requires overflow to be set to RejectPublish. Call .OverflowBehavior(QueueOverflowBehavior.RejectPublish).");
                 }
 
                 arguments["x-dead-letter-strategy"] = _options.DeadLetterStrategy.Value.ToEnumString();
@@ -815,7 +815,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         if (_options.ConsumerTimeout.HasValue)
         {
             if (!_isQuorumQueue)
-                throw new InvalidOperationException("Per-queue consumer timeout (x-consumer-timeout) requires quorum queues (RabbitMQ 4.3+). Call UseQuorumQueues() before ConsumerTimeout().");
+                throw new MessageBusException("Per-queue consumer timeout (x-consumer-timeout) requires quorum queues (RabbitMQ 4.3+). Call UseQuorumQueues() before ConsumerTimeout().");
 
             arguments["x-consumer-timeout"] = (long)_options.ConsumerTimeout.Value.TotalMilliseconds;
         }
@@ -826,10 +826,10 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         if (_options.DelayedRetryType.HasValue)
         {
             if (!_isQuorumQueue)
-                throw new InvalidOperationException("Delayed retries (x-delayed-retry-*) require quorum queues (RabbitMQ 4.3+). Call UseQuorumQueues() before UseDelayedRetries().");
+                throw new MessageBusException("Delayed retries (x-delayed-retry-*) require quorum queues (RabbitMQ 4.3+). Call UseQuorumQueues() before UseDelayedRetries().");
 
             if (_serverVersion is not null && _serverVersion < _delayedExchangePluginIncompatibleVersion)
-                throw new InvalidOperationException($"Delayed retries (x-delayed-retry-*) require RabbitMQ 4.3+. Detected server version: {_serverVersion}.");
+                throw new MessageBusException($"Delayed retries (x-delayed-retry-*) require RabbitMQ 4.3+. Detected server version: {_serverVersion}.");
 
             arguments["x-delayed-retry-type"] = _options.DelayedRetryType.Value.ToEnumString();
             if (_options.DelayedRetryMin.HasValue)
