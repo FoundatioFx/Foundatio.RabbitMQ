@@ -1,5 +1,3 @@
-using System;
-
 namespace Foundatio.Messaging;
 
 /// <summary>
@@ -23,15 +21,4 @@ public enum DelayedRetryType
     /// Delayed retry is explicitly disabled.
     /// </summary>
     Disabled
-}
-
-internal static class DelayedRetryTypeExtensions
-{
-    public static string ToRabbitMQString(this DelayedRetryType type) => type switch
-    {
-        DelayedRetryType.All => "all",
-        DelayedRetryType.Failed => "failed",
-        DelayedRetryType.Disabled => "disabled",
-        _ => throw new ArgumentOutOfRangeException(nameof(type), type, null)
-    };
 }
