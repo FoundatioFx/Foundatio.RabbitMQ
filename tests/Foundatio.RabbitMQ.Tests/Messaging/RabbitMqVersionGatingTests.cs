@@ -15,7 +15,10 @@ public class RabbitMqVersionGatingTests(AspireFixture fixture, ITestOutputHelper
     [Fact]
     public async Task SubscribeAsync_WithDeprecatedGlobalQos_FallsBackToPerChannelQos()
     {
+        Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
+
         string topic = "versiongate-globalqos-" + Guid.NewGuid().ToString("N")[..8];
+        string queueName = $"{topic}-queue";
         var messageReceived = new AsyncCountdownEvent(1);
         string? receivedData = null;
 
@@ -23,6 +26,7 @@ public class RabbitMqVersionGatingTests(AspireFixture fixture, ITestOutputHelper
         await using var messageBus = new RabbitMQMessageBus(o => o
             .ConnectionString(fixture.MessagingConnectionString!)
             .Topic(topic)
+            .SubscriptionQueueName(queueName)
             .PrefetchCount(10)
             .GlobalQos(true)
             .UseQuorumQueues()
@@ -47,13 +51,17 @@ public class RabbitMqVersionGatingTests(AspireFixture fixture, ITestOutputHelper
     [Fact]
     public async Task PublishAsync_WithConfirmsAndVersionDetection_DeliversSuccessfully()
     {
+        Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
+
         string topic = "versiongate-confirms-" + Guid.NewGuid().ToString("N")[..8];
+        string queueName = $"{topic}-queue";
         var messageReceived = new AsyncCountdownEvent(1);
         string? receivedData = null;
 
         await using var messageBus = new RabbitMQMessageBus(o => o
             .ConnectionString(fixture.MessagingConnectionString!)
             .Topic(topic)
+            .SubscriptionQueueName(queueName)
             .PublisherConfirmsEnabled(true)
             .UseQuorumQueues()
             .LoggerFactory(Log));
@@ -76,13 +84,17 @@ public class RabbitMqVersionGatingTests(AspireFixture fixture, ITestOutputHelper
     [Fact]
     public async Task SubscribeAsync_WithQuorumQueueAndDeliveryLimit_DeliversMessages()
     {
+        Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
+
         string topic = "versiongate-delivery-" + Guid.NewGuid().ToString("N")[..8];
+        string queueName = $"{topic}-queue";
         var messageReceived = new AsyncCountdownEvent(1);
         string? receivedData = null;
 
         await using var messageBus = new RabbitMQMessageBus(o => o
             .ConnectionString(fixture.MessagingConnectionString!)
             .Topic(topic)
+            .SubscriptionQueueName(queueName)
             .UseQuorumQueues()
             .DeliveryLimit(3)
             .LoggerFactory(Log));

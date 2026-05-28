@@ -20,6 +20,8 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
     [Fact]
     public async Task PublishAsync_DuringDiskAlarm_BlocksUntilAlarmClears()
     {
+        Assert.SkipWhen(!fixture.ChaosClusterAvailable, "Chaos cluster not available");
+
         // Arrange
         string connectionString = Chaos.GetConnectionString("chaos-1");
         await using var messageBus = new RabbitMQMessageBus(o => o
@@ -82,6 +84,8 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
     [Fact]
     public async Task SubscribeAsync_DuringDiskAlarm_ContinuesReceivingAfterRecovery()
     {
+        Assert.SkipWhen(!fixture.ChaosClusterAvailable, "Chaos cluster not available");
+
         // Arrange
         string connectionString = Chaos.GetConnectionString("chaos-2");
         var received = new ConcurrentBag<string>();
@@ -119,6 +123,8 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
     [Fact]
     public async Task PublishAsync_AfterNodeRestart_RecoversAndDelivers()
     {
+        Assert.SkipWhen(!fixture.ChaosClusterAvailable, "Chaos cluster not available");
+
         // Arrange
         string connectionString = Chaos.GetConnectionString("chaos-3");
 
@@ -160,6 +166,8 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
     [Fact]
     public async Task PublishAsync_WithMultipleHosts_FailsOverToHealthyNode()
     {
+        Assert.SkipWhen(!fixture.ChaosClusterAvailable, "Chaos cluster not available");
+
         // Arrange
         string host1 = Chaos.GetConnectionString("chaos-1");
         string host2 = Chaos.GetConnectionString("chaos-2");
@@ -212,6 +220,8 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
     [Fact]
     public async Task PublishAsync_DuringQuorumLoss_RetriesAndResumesWhenNodeRejoins()
     {
+        Assert.SkipWhen(!fixture.ChaosClusterAvailable, "Chaos cluster not available");
+
         // Arrange - connect to all 3 cluster nodes
         string host1 = Chaos.GetConnectionString("chaos-1");
         string host2 = Chaos.GetConnectionString("chaos-2");
@@ -272,6 +282,8 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
     [Fact]
     public async Task PublishAsync_WithPublisherConfirms_DuringDiskAlarm_FailsOrTimesOut()
     {
+        Assert.SkipWhen(!fixture.ChaosClusterAvailable, "Chaos cluster not available");
+
         // Arrange
         string connectionString = Chaos.GetConnectionString("chaos-1");
 
@@ -309,6 +321,8 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
     [Fact]
     public async Task SubscribeAsync_AfterNodeKill_ReconnectsAndReceivesMessages()
     {
+        Assert.SkipWhen(!fixture.ChaosClusterAvailable, "Chaos cluster not available");
+
         // Arrange
         string connectionString = Chaos.GetConnectionString("chaos-3");
         var received = new ConcurrentBag<string>();
@@ -359,6 +373,8 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
     [Fact]
     public async Task PublishAsync_DuringRapidNodeFlapping_RemainsResilient()
     {
+        Assert.SkipWhen(!fixture.ChaosClusterAvailable, "Chaos cluster not available");
+
         // Arrange
         string connectionString = Chaos.GetConnectionString("chaos-2");
 

@@ -154,7 +154,12 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
 #pragma warning disable CS0618 // GlobalQos is obsolete but we still need to read it for backward compatibility
                 bool useGlobalQos = _options.GlobalQos;
 #pragma warning restore CS0618
-                if (useGlobalQos && _serverVersion is not null && _serverVersion >= _globalQosRemovedVersion)
+                if (useGlobalQos && _isQuorumQueue)
+                {
+                    _logger.LogWarning("GlobalQos is not supported on quorum queues. Falling back to per-channel prefetch (global: false). Remove the GlobalQos option to suppress this warning");
+                    useGlobalQos = false;
+                }
+                else if (useGlobalQos && _serverVersion is not null && _serverVersion >= _globalQosRemovedVersion)
                 {
                     _logger.LogWarning("GlobalQos is not supported on RabbitMQ {ServerVersion}. Falling back to per-channel prefetch (global: false). Remove the GlobalQos option to suppress this warning", _serverVersion);
                     useGlobalQos = false;

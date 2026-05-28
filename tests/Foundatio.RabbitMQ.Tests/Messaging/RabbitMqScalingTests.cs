@@ -230,6 +230,8 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
     [Fact]
     public async Task SubscribeAsync_AfterMemoryAlarm_ResumesReceivingMessages()
     {
+        Assert.SkipWhen(!fixture.ChaosClusterAvailable, "Chaos cluster not available");
+
         var connectionString = Chaos.GetConnectionString("chaos-1");
         var received = new ConcurrentBag<string>();
 
@@ -284,6 +286,8 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
     [Fact]
     public async Task SubscribeAsync_AfterConnectionForceClose_ReconnectsAndResumes()
     {
+        Assert.SkipWhen(!fixture.ChaosClusterAvailable, "Chaos cluster not available");
+
         var connectionString = Chaos.GetConnectionString("chaos-2");
         var received = new ConcurrentBag<string>();
 
@@ -330,6 +334,8 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
     [Fact]
     public async Task PublishAsync_DuringRollingNodeRestart_MaintainsDeliveryWithQuorumQueues()
     {
+        Assert.SkipWhen(!fixture.ChaosClusterAvailable, "Chaos cluster not available");
+
         var host1 = Chaos.GetConnectionString("chaos-1");
         var host2 = Chaos.GetConnectionString("chaos-2");
         var host3 = Chaos.GetConnectionString("chaos-3");
@@ -443,6 +449,8 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
     [Fact]
     public async Task SubscribeAsync_AfterConsumerDisconnectWithUnackedMessages_RedeliversToNewConsumer()
     {
+        Assert.SkipWhen(!fixture.ChaosClusterAvailable, "Chaos cluster not available");
+
         var host1 = Chaos.GetConnectionString("chaos-1");
         var host2 = Chaos.GetConnectionString("chaos-2");
         var host3 = Chaos.GetConnectionString("chaos-3");
