@@ -798,7 +798,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
             if (!_isQuorumQueue)
                 throw new InvalidOperationException("Delayed retries (x-delayed-retry-*) require quorum queues (RabbitMQ 4.3+). Call UseQuorumQueues() before UseDelayedRetries().");
 
-            arguments["x-delayed-retry-type"] = _options.DelayedRetryType.Value.ToString().ToLowerInvariant();
+            arguments["x-delayed-retry-type"] = _options.DelayedRetryType.Value.ToEnumString();
             if (_options.DelayedRetryMin.HasValue)
                 arguments["x-delayed-retry-min"] = _options.DelayedRetryMin.Value;
             if (_options.DelayedRetryMax.HasValue)
