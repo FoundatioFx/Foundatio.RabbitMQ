@@ -14,14 +14,13 @@ namespace Foundatio.RabbitMQ.Tests.Messaging;
 public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
     : TestWithLoggingBase(output), IClassFixture<AspireFixture>
 {
-    private ChaosTestHelper? _chaos;
-    private ChaosTestHelper Chaos => _chaos ??= new(fixture.App, Log);
+    private ChaosTestHelper Chaos => field ??= new(fixture.App, Log);
 
     [Fact]
     public async Task PublishAsync_DuringDiskAlarm_BlocksUntilAlarmClears()
     {
         // Arrange
-        var connectionString = Chaos.GetConnectionString("chaos-1");
+        string connectionString = Chaos.GetConnectionString("chaos-1");
         await using var messageBus = new RabbitMQMessageBus(o => o
             .ConnectionString(connectionString)
             .Topic("chaos-disk-alarm-test-" + Guid.NewGuid().ToString("N")[..8])
@@ -83,7 +82,7 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
     public async Task SubscribeAsync_DuringDiskAlarm_ContinuesReceivingAfterRecovery()
     {
         // Arrange
-        var connectionString = Chaos.GetConnectionString("chaos-2");
+        string connectionString = Chaos.GetConnectionString("chaos-2");
         var received = new ConcurrentBag<string>();
 
         await using var messageBus = new RabbitMQMessageBus(o => o
@@ -120,7 +119,7 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
     public async Task PublishAsync_AfterNodeRestart_RecoversAndDelivers()
     {
         // Arrange
-        var connectionString = Chaos.GetConnectionString("chaos-3");
+        string connectionString = Chaos.GetConnectionString("chaos-3");
 
         await using var messageBus = new RabbitMQMessageBus(o => o
             .ConnectionString(connectionString)
@@ -161,15 +160,15 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
     public async Task PublishAsync_WithMultipleHosts_FailsOverToHealthyNode()
     {
         // Arrange
-        var host1 = Chaos.GetConnectionString("chaos-1");
-        var host2 = Chaos.GetConnectionString("chaos-2");
-        var host3 = Chaos.GetConnectionString("chaos-3");
+        string host1 = Chaos.GetConnectionString("chaos-1");
+        string host2 = Chaos.GetConnectionString("chaos-2");
+        string host3 = Chaos.GetConnectionString("chaos-3");
         var uri2 = new Uri(host2);
         var uri3 = new Uri(host3);
 
         await using var messageBus = new RabbitMQMessageBus(o => o
             .ConnectionString(host1)
-            .Hosts([$"{uri2.Host}:{uri2.Port}", $"{uri3.Host}:{uri3.Port}"])
+            .Hosts($"{uri2.Host}:{uri2.Port}", $"{uri3.Host}:{uri3.Port}")
             .Topic("chaos-failover-test-" + Guid.NewGuid().ToString("N")[..8])
             .LoggerFactory(Log));
 
@@ -213,15 +212,15 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
     public async Task PublishAsync_DuringQuorumLoss_RetriesAndResumesWhenNodeRejoins()
     {
         // Arrange - connect to all 3 cluster nodes
-        var host1 = Chaos.GetConnectionString("chaos-1");
-        var host2 = Chaos.GetConnectionString("chaos-2");
-        var host3 = Chaos.GetConnectionString("chaos-3");
+        string host1 = Chaos.GetConnectionString("chaos-1");
+        string host2 = Chaos.GetConnectionString("chaos-2");
+        string host3 = Chaos.GetConnectionString("chaos-3");
         var uri2 = new Uri(host2);
         var uri3 = new Uri(host3);
 
         await using var messageBus = new RabbitMQMessageBus(o => o
             .ConnectionString(host1)
-            .Hosts([$"{uri2.Host}:{uri2.Port}", $"{uri3.Host}:{uri3.Port}"])
+            .Hosts($"{uri2.Host}:{uri2.Port}", $"{uri3.Host}:{uri3.Port}")
             .Topic("chaos-quorum-loss-test-" + Guid.NewGuid().ToString("N")[..8])
             .LoggerFactory(Log));
 
@@ -273,7 +272,7 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
     public async Task PublishAsync_WithPublisherConfirms_DuringDiskAlarm_FailsOrTimesOut()
     {
         // Arrange
-        var connectionString = Chaos.GetConnectionString("chaos-1");
+        string connectionString = Chaos.GetConnectionString("chaos-1");
 
         await using var messageBus = new RabbitMQMessageBus(o => o
             .ConnectionString(connectionString)
@@ -310,7 +309,7 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
     public async Task SubscribeAsync_AfterNodeKill_ReconnectsAndReceivesMessages()
     {
         // Arrange
-        var connectionString = Chaos.GetConnectionString("chaos-3");
+        string connectionString = Chaos.GetConnectionString("chaos-3");
         var received = new ConcurrentBag<string>();
 
         await using var messageBus = new RabbitMQMessageBus(o => o
@@ -360,7 +359,7 @@ public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
     public async Task PublishAsync_DuringRapidNodeFlapping_RemainsResilient()
     {
         // Arrange
-        var connectionString = Chaos.GetConnectionString("chaos-2");
+        string connectionString = Chaos.GetConnectionString("chaos-2");
 
         await using var messageBus = new RabbitMQMessageBus(o => o
             .ConnectionString(connectionString)
