@@ -91,7 +91,7 @@ public class RabbitMqServerVersionTests
     }
 
     [Fact]
-    public void ParseServerVersion_WithLowerVersion_DetectsAsBelow()
+    public void VersionComparison_WithLowerVersion_DetectsAsBelow()
     {
         // Arrange
         var rmq42 = new Version(4, 2, 0);

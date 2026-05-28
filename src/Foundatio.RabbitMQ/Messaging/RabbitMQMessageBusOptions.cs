@@ -171,6 +171,15 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     public bool SingleActiveConsumer { get; set; }
 
     /// <summary>
+    /// Maximum number of priority levels for the queue (1-32).
+    /// Messages published with a higher priority value are delivered to consumers before lower-priority messages.
+    /// RabbitMQ 4.3+ quorum queues support 32 strict priority levels.
+    /// Set via the x-max-priority queue argument.
+    /// See: https://www.rabbitmq.com/docs/priority
+    /// </summary>
+    public byte? MaxPriority { get; set; }
+
+    /// <summary>
     /// Configures native delayed retry for quorum queues (RabbitMQ 4.3+).
     /// When set, rejected/failed messages are held in a delayed state before becoming available again.
     /// The delay uses linear backoff: min(min_delay * delivery_count, max_delay).
@@ -416,6 +425,21 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
     public RabbitMQMessageBusOptionsBuilder UseSingleActiveConsumer(bool enabled = true)
     {
         Target.SingleActiveConsumer = enabled;
+        return this;
+    }
+
+    /// <summary>
+    /// Enables message priority on the queue. Messages published with higher priority are
+    /// delivered to consumers before lower-priority messages.
+    /// RabbitMQ 4.3+ quorum queues support up to 32 strict priority levels.
+    /// </summary>
+    /// <param name="maxPriority">Maximum priority levels (1-32). Default: 32.</param>
+    public RabbitMQMessageBusOptionsBuilder UseMessagePriority(byte maxPriority = 32)
+    {
+        ArgumentOutOfRangeException.ThrowIfZero(maxPriority);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(maxPriority, (byte)32);
+
+        Target.MaxPriority = maxPriority;
         return this;
     }
 

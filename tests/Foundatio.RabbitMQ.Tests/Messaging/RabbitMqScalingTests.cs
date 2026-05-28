@@ -24,6 +24,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
     {
         Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
 
+        // Arrange
         string topic = "scaling-competing-" + Guid.NewGuid().ToString("N")[..8];
         string queueName = $"{topic}-shared";
         const int messageCount = 50;
@@ -61,6 +62,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
 
             await Task.Delay(TimeSpan.FromSeconds(2), TestCancellationToken);
 
+            // Act
             await using var publisher = new RabbitMQMessageBus(o => o
                 .ConnectionString(fixture.MessagingConnectionString!)
                 .Topic(topic)
@@ -74,6 +76,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
 
             await allReceived.WaitAsync(TimeSpan.FromSeconds(30));
 
+            // Assert
             int totalReceived = received.Values.Sum(b => b.Count);
             Assert.Equal(messageCount, totalReceived);
 
@@ -95,6 +98,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
     {
         Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
 
+        // Arrange
         string topic = "scaling-prefetch-" + Guid.NewGuid().ToString("N")[..8];
         string queueName = $"{topic}-prefetch";
         const ushort prefetchCount = 2;
@@ -125,6 +129,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
 
             await Task.Delay(TimeSpan.FromSeconds(1), TestCancellationToken);
 
+            // Act
             await using var publisher = new RabbitMQMessageBus(o => o
                 .ConnectionString(fixture.MessagingConnectionString!)
                 .Topic(topic)
@@ -138,6 +143,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
 
             await Task.Delay(TimeSpan.FromSeconds(5), TestCancellationToken);
 
+            // Assert
             int deliveredWhileBlocked = deliveredBeforeAck.Count;
             _logger.LogInformation("Messages delivered while consumer is blocked: {Count} (prefetch={Prefetch})",
                 deliveredWhileBlocked, prefetchCount);
@@ -156,6 +162,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
     {
         Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
 
+        // Arrange
         string topic = "scaling-confirms-" + Guid.NewGuid().ToString("N")[..8];
         string queueName = $"{topic}-confirmed";
         var received = new ConcurrentBag<string>();
@@ -185,9 +192,11 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
             .PublisherConfirmsEnabled(true)
             .LoggerFactory(Log));
 
+        // Act
         await publisher.PublishAsync(new SimpleMessageA { Data = "confirmed-message" },
             cancellationToken: TestCancellationToken);
 
+        // Assert
         await messageReceived.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Contains("confirmed-message", received);
     }
@@ -197,6 +206,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
     {
         Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
 
+        // Arrange
         string topic = "scaling-mismatch-" + Guid.NewGuid().ToString("N")[..8];
         string queueName = $"{topic}-mismatch";
 
@@ -212,6 +222,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
         await classicBus.SubscribeAsync<SimpleMessageA>(_ => { }, TestCancellationToken);
         await Task.Delay(TimeSpan.FromSeconds(2), TestCancellationToken);
 
+        // Act
         var exception = await Record.ExceptionAsync(async () =>
         {
             await using var quorumBus = new RabbitMQMessageBus(o => o
@@ -228,6 +239,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
             await quorumBus.SubscribeAsync<SimpleMessageA>(_ => { }, cts.Token);
         });
 
+        // Assert
         _logger.LogInformation("Queue mismatch exception: {Type}: {Message}",
             exception?.GetType().Name, exception?.Message);
 
@@ -239,6 +251,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
     {
         Assert.SkipWhen(!fixture.ChaosClusterAvailable, "Chaos cluster not available");
 
+        // Arrange
         var connectionString = Chaos.GetConnectionString("chaos-1");
         var received = new ConcurrentBag<string>();
 
@@ -257,6 +270,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
         await Task.Delay(TimeSpan.FromSeconds(1), TestCancellationToken);
         Assert.Contains("before-memory-alarm", received);
 
+        // Act
         try
         {
             await Chaos.TriggerMemoryAlarmAsync("chaos-1", TestCancellationToken);
@@ -282,6 +296,8 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
             }
 
             await Task.Delay(TimeSpan.FromSeconds(2), TestCancellationToken);
+
+            // Assert
             Assert.Contains("after-memory-alarm", received);
         }
         finally
@@ -295,6 +311,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
     {
         Assert.SkipWhen(!fixture.ChaosClusterAvailable, "Chaos cluster not available");
 
+        // Arrange
         var connectionString = Chaos.GetConnectionString("chaos-2");
         var received = new ConcurrentBag<string>();
 
@@ -313,6 +330,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
         await Task.Delay(TimeSpan.FromSeconds(1), TestCancellationToken);
         Assert.Contains("before-force-close", received);
 
+        // Act
         await Chaos.CloseAllConnectionsAsync("chaos-2", TestCancellationToken);
         await Task.Delay(TimeSpan.FromSeconds(5), TestCancellationToken);
 
@@ -335,6 +353,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
             }
         }
 
+        // Assert
         Assert.True(messageReceived, "Subscriber should receive messages after forced connection close");
     }
 
@@ -343,6 +362,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
     {
         Assert.SkipWhen(!fixture.ChaosClusterAvailable, "Chaos cluster not available");
 
+        // Arrange
         var host1 = Chaos.GetConnectionString("chaos-1");
         var host2 = Chaos.GetConnectionString("chaos-2");
         var host3 = Chaos.GetConnectionString("chaos-3");
@@ -386,6 +406,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
             cancellationToken: TestCancellationToken);
         await Task.Delay(TimeSpan.FromSeconds(1), TestCancellationToken);
 
+        // Act
         using var publishCts = new CancellationTokenSource();
         int publishCount = 0;
 
@@ -438,6 +459,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
 
         await Task.Delay(TimeSpan.FromSeconds(3), TestCancellationToken);
 
+        // Assert
         _logger.LogInformation("Rolling restart results: published={Published}, received={Received}",
             published.Count, received.Count);
 
@@ -458,6 +480,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
     {
         Assert.SkipWhen(!fixture.ChaosClusterAvailable, "Chaos cluster not available");
 
+        // Arrange
         var host1 = Chaos.GetConnectionString("chaos-1");
         var host2 = Chaos.GetConnectionString("chaos-2");
         var host3 = Chaos.GetConnectionString("chaos-3");
@@ -512,6 +535,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
             await Task.Delay(TimeSpan.FromSeconds(2), TestCancellationToken);
             _logger.LogInformation("Messages delivered to subscriber1 before kill: {Count}", firstDeliveries.Count);
 
+            // Act
             await subscriber1.DisposeAsync();
             subscriber1 = null;
 
@@ -536,6 +560,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
 
             await Task.Delay(TimeSpan.FromSeconds(5), TestCancellationToken);
 
+            // Assert
             _logger.LogInformation("Redelivered messages: {Count}", redeliveries.Count);
             Assert.True(redeliveries.Count >= 1,
                 $"Expected at least 1 redelivered message after subscriber disconnect, got {redeliveries.Count}");

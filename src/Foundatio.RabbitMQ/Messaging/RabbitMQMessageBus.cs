@@ -18,6 +18,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
 {
     private const string XDeliveryCountHeader = "x-delivery-count";
     private const string XOriginalMessageIdHeader = "x-original-message-id";
+    private const string PriorityPropertyKey = "Priority";
     private static readonly Version _delayedExchangePluginIncompatibleVersion = new(4, 3);
     private static readonly Version _globalQosRemovedVersion = new(4, 3);
 
@@ -637,11 +638,19 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         if (_options.DefaultMessageTimeToLive.HasValue)
             basicProperties.Expiration = _options.DefaultMessageTimeToLive.Value.TotalMilliseconds.ToString(CultureInfo.InvariantCulture);
 
+        if (options.Properties.TryGetValue(PriorityPropertyKey, out string? priorityValue) && Byte.TryParse(priorityValue, out byte priority))
+            basicProperties.Priority = priority;
+
         if (options.Properties.Count > 0)
         {
             basicProperties.Headers ??= new Dictionary<string, object?>();
             foreach (var property in options.Properties)
+            {
+                if (String.Equals(property.Key, PriorityPropertyKey, StringComparison.Ordinal))
+                    continue;
+
                 basicProperties.Headers.Add(property.Key, property.Value);
+            }
         }
 
         // RabbitMQ only supports delayed messages with a third party plugin called "rabbitmq_delayed_message_exchange"
@@ -822,6 +831,9 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
 
         if (_options.SingleActiveConsumer)
             arguments["x-single-active-consumer"] = true;
+
+        if (_options.MaxPriority.HasValue)
+            arguments["x-max-priority"] = (int)_options.MaxPriority.Value;
 
         if (_options.DelayedRetryType.HasValue)
         {
