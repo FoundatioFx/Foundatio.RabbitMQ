@@ -135,6 +135,33 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     public string? DeadLetterRoutingKey { get; set; }
 
     /// <summary>
+    /// Dead-letter strategy for quorum queues. Controls whether messages are transferred
+    /// to the DLX with at-most-once (default, may lose messages) or at-least-once (guaranteed delivery)
+    /// semantics. At-least-once requires Overflow to be set to RejectPublish.
+    /// Set via the x-dead-letter-strategy queue argument.
+    /// See: https://www.rabbitmq.com/docs/quorum-queues#dead-lettering
+    /// </summary>
+    public DeadLetterStrategy? DeadLetterStrategy { get; set; }
+
+    /// <summary>
+    /// Queue overflow behavior when the queue reaches its max length.
+    /// Must be set to RejectPublish when using at-least-once dead-lettering.
+    /// Set via the x-overflow queue argument.
+    /// See: https://www.rabbitmq.com/docs/maxlength#overflow-behaviour
+    /// </summary>
+    public QueueOverflowBehavior? Overflow { get; set; }
+
+    /// <summary>
+    /// Consumer timeout in milliseconds for quorum queues (RabbitMQ 4.3+).
+    /// Limits how long a consumer can hold unacknowledged messages before the broker returns them.
+    /// When exceeded, messages are requeued and the consumer is cancelled gracefully.
+    /// Set via the x-consumer-timeout queue argument.
+    /// Default: null (uses broker default, typically 30 minutes).
+    /// See: https://www.rabbitmq.com/docs/consumers#acknowledgement-timeout
+    /// </summary>
+    public TimeSpan? ConsumerTimeout { get; set; }
+
+    /// <summary>
     /// When true, only one consumer at a time will receive messages from the queue.
     /// Other consumers act as standby and automatically take over if the active consumer disconnects.
     /// Useful for strict message ordering with automatic failover.
@@ -347,11 +374,37 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
     /// </summary>
     /// <param name="exchange">The DLX exchange name.</param>
     /// <param name="routingKey">Optional routing key for dead-lettered messages.</param>
-    public RabbitMQMessageBusOptionsBuilder DeadLetterExchange(string exchange, string? routingKey = null)
+    /// <param name="strategy">Dead-letter strategy. AtLeastOnce requires overflow to be RejectPublish.</param>
+    public RabbitMQMessageBusOptionsBuilder DeadLetterExchange(string exchange, string? routingKey = null, DeadLetterStrategy? strategy = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(exchange);
         Target.DeadLetterExchange = exchange;
         Target.DeadLetterRoutingKey = routingKey;
+        Target.DeadLetterStrategy = strategy;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the queue overflow behavior when max length is reached.
+    /// Must be RejectPublish when using at-least-once dead-lettering on quorum queues.
+    /// </summary>
+    /// <param name="behavior">The overflow behavior.</param>
+    public RabbitMQMessageBusOptionsBuilder OverflowBehavior(QueueOverflowBehavior behavior)
+    {
+        Target.Overflow = behavior;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the consumer timeout for quorum queues (RabbitMQ 4.3+).
+    /// When a consumer holds unacknowledged messages longer than this, the broker returns them
+    /// and gracefully cancels the consumer.
+    /// </summary>
+    /// <param name="timeout">Timeout duration. Must be positive.</param>
+    public RabbitMQMessageBusOptionsBuilder ConsumerTimeout(TimeSpan timeout)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+        Target.ConsumerTimeout = timeout;
         return this;
     }
 

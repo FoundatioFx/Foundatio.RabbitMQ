@@ -16,7 +16,17 @@ public enum DelayedRetryType
     All,
 
     /// <summary>
-    /// Only messages that failed delivery (rejects with requeue=true) are delayed.
+    /// Messages returned without marking the delivery as failed are delayed.
+    /// Includes: basic.nack, AMQP 1.0 released, modified with delivery-failed=false.
+    /// These do NOT increment delivery-count, supporting unlimited returns.
+    /// </summary>
+    [EnumMember(Value = "returned")]
+    Returned,
+
+    /// <summary>
+    /// Only messages where delivery actually failed are delayed.
+    /// Includes: basic.reject, client crash, AMQP 1.0 rejected, modified with delivery-failed=true.
+    /// These increment delivery-count toward the delivery-limit.
     /// </summary>
     [EnumMember(Value = "failed")]
     Failed,

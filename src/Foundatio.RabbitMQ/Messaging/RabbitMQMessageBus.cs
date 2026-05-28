@@ -788,7 +788,21 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
 
             if (!String.IsNullOrWhiteSpace(_options.DeadLetterRoutingKey))
                 arguments["x-dead-letter-routing-key"] = _options.DeadLetterRoutingKey;
+
+            if (_options.DeadLetterStrategy.HasValue)
+            {
+                if (_options.DeadLetterStrategy == DeadLetterStrategy.AtLeastOnce && _options.Overflow != QueueOverflowBehavior.RejectPublish)
+                    throw new InvalidOperationException("At-least-once dead-lettering requires overflow to be set to RejectPublish. Call .OverflowBehavior(QueueOverflowBehavior.RejectPublish).");
+
+                arguments["x-dead-letter-strategy"] = _options.DeadLetterStrategy.Value.ToEnumString();
+            }
         }
+
+        if (_options.Overflow.HasValue)
+            arguments["x-overflow"] = _options.Overflow.Value.ToEnumString();
+
+        if (_options.ConsumerTimeout.HasValue)
+            arguments["x-consumer-timeout"] = (long)_options.ConsumerTimeout.Value.TotalMilliseconds;
 
         if (_options.SingleActiveConsumer)
             arguments["x-single-active-consumer"] = true;
