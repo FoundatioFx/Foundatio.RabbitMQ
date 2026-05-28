@@ -45,11 +45,14 @@ public class AspireFixture : IAsyncLifetime
 
         try
         {
-            for (int i = 1; i <= 3; i++)
-            {
-                await _app.ResourceNotifications.WaitForResourceHealthyAsync($"chaos-{i}")
-                    .WaitAsync(TimeSpan.FromSeconds(30));
-            }
+            await Task.WhenAll(
+                _app.ResourceNotifications.WaitForResourceHealthyAsync("chaos-1")
+                    .WaitAsync(TimeSpan.FromSeconds(120)),
+                _app.ResourceNotifications.WaitForResourceHealthyAsync("chaos-2")
+                    .WaitAsync(TimeSpan.FromSeconds(120)),
+                _app.ResourceNotifications.WaitForResourceHealthyAsync("chaos-3")
+                    .WaitAsync(TimeSpan.FromSeconds(120))
+            );
             ChaosClusterAvailable = true;
         }
         catch (Exception)
@@ -69,7 +72,7 @@ public class AspireFixture : IAsyncLifetime
             var app = await appHost.BuildAsync()
                 .WaitAsync(TimeSpan.FromMinutes(1));
 
-            using var startCts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+            using var startCts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
             await app.StartAsync(startCts.Token);
 
             await app.ResourceNotifications.WaitForResourceHealthyAsync("messaging")

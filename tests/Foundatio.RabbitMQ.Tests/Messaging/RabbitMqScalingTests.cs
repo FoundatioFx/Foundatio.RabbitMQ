@@ -255,18 +255,18 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
 
         await messageBus.PublishAsync(new SimpleMessageA { Data = "before-memory-alarm" },
             cancellationToken: TestCancellationToken);
-        await Task.Delay(TimeSpan.FromSeconds(2), TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(1), TestCancellationToken);
         Assert.Contains("before-memory-alarm", received);
 
         try
         {
             await Chaos.TriggerMemoryAlarmAsync("chaos-1", TestCancellationToken);
-            await Task.Delay(TimeSpan.FromSeconds(5), TestCancellationToken);
+            await Task.Delay(TimeSpan.FromSeconds(3), TestCancellationToken);
 
             await Chaos.ClearMemoryAlarmAsync("chaos-1", TestCancellationToken);
-            await Task.Delay(TimeSpan.FromSeconds(5), TestCancellationToken);
+            await Task.Delay(TimeSpan.FromSeconds(3), TestCancellationToken);
 
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             bool published = false;
             while (!cts.Token.IsCancellationRequested && !published)
             {
@@ -278,11 +278,11 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
+                    await Task.Delay(TimeSpan.FromSeconds(1), cts.Token);
                 }
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(3), TestCancellationToken);
+            await Task.Delay(TimeSpan.FromSeconds(2), TestCancellationToken);
             Assert.Contains("after-memory-alarm", received);
         }
         finally
@@ -311,13 +311,13 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
 
         await messageBus.PublishAsync(new SimpleMessageA { Data = "before-force-close" },
             cancellationToken: TestCancellationToken);
-        await Task.Delay(TimeSpan.FromSeconds(2), TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(1), TestCancellationToken);
         Assert.Contains("before-force-close", received);
 
         await Chaos.CloseAllConnectionsAsync("chaos-2", TestCancellationToken);
-        await Task.Delay(TimeSpan.FromSeconds(10), TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(5), TestCancellationToken);
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         bool messageReceived = false;
 
         while (!cts.Token.IsCancellationRequested && !messageReceived)
@@ -326,13 +326,13 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
             {
                 await messageBus.PublishAsync(new SimpleMessageA { Data = "after-force-close" },
                     cancellationToken: cts.Token);
-                await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
+                await Task.Delay(TimeSpan.FromSeconds(1), cts.Token);
                 messageReceived = received.Contains("after-force-close");
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogWarning(ex, "Still recovering from force-close...");
-                await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
+                await Task.Delay(TimeSpan.FromSeconds(1), cts.Token);
             }
         }
 
@@ -381,11 +381,11 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
             received.Add(msg.Data!);
         }, TestCancellationToken);
 
-        await Task.Delay(TimeSpan.FromSeconds(2), TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(1), TestCancellationToken);
 
         await publisher.PublishAsync(new SimpleMessageA { Data = "warmup" },
             cancellationToken: TestCancellationToken);
-        await Task.Delay(TimeSpan.FromSeconds(2), TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(1), TestCancellationToken);
 
         using var publishCts = new CancellationTokenSource();
         int publishCount = 0;
@@ -409,26 +409,26 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
                 catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
                 {
                     _logger.LogWarning(ex, "Publish failed during rolling restart, retrying...");
-                    await Task.Delay(TimeSpan.FromSeconds(2), publishCts.Token);
+                    await Task.Delay(TimeSpan.FromSeconds(1), publishCts.Token);
                 }
             }
         }, publishCts.Token);
 
-        await Task.Delay(TimeSpan.FromSeconds(3), TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(2), TestCancellationToken);
 
         string[] nodeOrder = ["chaos-1", "chaos-2", "chaos-3"];
         foreach (string node in nodeOrder)
         {
             _logger.LogInformation("Rolling restart: stopping {Node}", node);
             await Chaos.StopNodeAsync(node, TestCancellationToken);
-            await Task.Delay(TimeSpan.FromSeconds(10), TestCancellationToken);
+            await Task.Delay(TimeSpan.FromSeconds(5), TestCancellationToken);
 
             _logger.LogInformation("Rolling restart: starting {Node}", node);
             await Chaos.StartNodeAsync(node, TestCancellationToken);
-            await Task.Delay(TimeSpan.FromSeconds(15), TestCancellationToken);
+            await Chaos.WaitForNodeReadyAsync(node, TimeSpan.FromSeconds(30), TestCancellationToken);
         }
 
-        await Task.Delay(TimeSpan.FromSeconds(10), TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(5), TestCancellationToken);
         await publishCts.CancelAsync();
 
         try { await publishTask; }
@@ -437,7 +437,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
             _logger.LogDebug("Publish task cancelled during shutdown (expected)");
         }
 
-        await Task.Delay(TimeSpan.FromSeconds(5), TestCancellationToken);
+        await Task.Delay(TimeSpan.FromSeconds(3), TestCancellationToken);
 
         _logger.LogInformation("Rolling restart results: published={Published}, received={Received}",
             published.Count, received.Count);
@@ -502,7 +502,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
                 await holdGate.WaitAsync(TestCancellationToken);
             }, TestCancellationToken);
 
-            await Task.Delay(TimeSpan.FromSeconds(2), TestCancellationToken);
+            await Task.Delay(TimeSpan.FromSeconds(1), TestCancellationToken);
 
             for (int i = 0; i < 3; i++)
             {
@@ -510,7 +510,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
                     cancellationToken: TestCancellationToken);
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(3), TestCancellationToken);
+            await Task.Delay(TimeSpan.FromSeconds(2), TestCancellationToken);
             _logger.LogInformation("Messages delivered to subscriber1 before kill: {Count}", firstDeliveries.Count);
 
             await subscriber1.DisposeAsync();
@@ -535,7 +535,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
                 redeliveries.Add(msg.Data!);
             }, TestCancellationToken);
 
-            await Task.Delay(TimeSpan.FromSeconds(10), TestCancellationToken);
+            await Task.Delay(TimeSpan.FromSeconds(5), TestCancellationToken);
 
             _logger.LogInformation("Redelivered messages: {Count}", redeliveries.Count);
             Assert.True(redeliveries.Count >= 1,

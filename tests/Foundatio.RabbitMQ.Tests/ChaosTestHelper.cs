@@ -47,6 +47,26 @@ public class ChaosTestHelper
         await RunDockerCommandAsync($"start {containerId}", cancellationToken);
     }
 
+    public async Task WaitForNodeReadyAsync(string resourceName, TimeSpan timeout, CancellationToken cancellationToken = default)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
+                var output = await DockerExecAsync(containerId, "rabbitmqctl status", cancellationToken);
+                if (output.Contains("pid", StringComparison.OrdinalIgnoreCase))
+                    return;
+            }
+            catch { }
+
+            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+        }
+
+        throw new TimeoutException($"Node '{resourceName}' did not become ready within {timeout.TotalSeconds}s");
+    }
+
     public async Task<bool> HasDiskAlarmAsync(string resourceName, CancellationToken cancellationToken = default)
     {
         var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
@@ -61,7 +81,7 @@ public class ChaosTestHelper
         {
             if (await HasDiskAlarmAsync(resourceName, cancellationToken))
                 return;
-            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+            await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken);
         }
 
         throw new TimeoutException($"Disk alarm on '{resourceName}' did not activate within {timeout.TotalSeconds}s");
@@ -74,7 +94,7 @@ public class ChaosTestHelper
         {
             if (!await HasDiskAlarmAsync(resourceName, cancellationToken))
                 return;
-            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+            await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken);
         }
 
         throw new TimeoutException($"Disk alarm on '{resourceName}' did not clear within {timeout.TotalSeconds}s");
