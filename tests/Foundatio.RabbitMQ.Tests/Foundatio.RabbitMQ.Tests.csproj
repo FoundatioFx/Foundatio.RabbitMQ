@@ -5,6 +5,5 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Aspire.Hosting.Testing" Version="13.4.6" />
-    <PackageReference Update="Microsoft.NET.Test.Sdk" Version="18.7.0" />
   </ItemGroup>
 </Project>

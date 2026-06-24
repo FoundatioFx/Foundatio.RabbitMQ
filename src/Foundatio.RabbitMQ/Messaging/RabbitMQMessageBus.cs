@@ -385,8 +385,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         try
         {
             await EnsureTopicCreatedAsync(envelope.CancellationToken).AnyContext();
-            // Zero-copy: the publish is awaited within this consumer callback, so envelope.Body stays valid;
-            // pass the ReadOnlyMemory<byte> straight through to BasicPublishAsync without an intermediate copy.
             await PublishMessageAsync(envelope.Exchange, envelope.RoutingKey, envelope.Body, properties, envelope.CancellationToken).AnyContext();
             await subscriberChannel.BasicAckAsync(envelope.DeliveryTag, false).AnyContext();
 
