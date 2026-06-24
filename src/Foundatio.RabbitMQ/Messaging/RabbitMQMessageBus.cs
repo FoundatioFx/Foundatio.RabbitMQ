@@ -472,7 +472,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
 
     protected virtual IMessage ConvertToMessage(BasicDeliverEventArgs envelope)
     {
-        var message = new Message(envelope.Body, DeserializeMessageBody)
+        var message = new Message(envelope.Body.ToArray(), DeserializeMessageBody)
         {
             Type = envelope.BasicProperties.Type,
             ClrType = GetMappedMessageType(envelope.BasicProperties.Type),
