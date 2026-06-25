@@ -472,7 +472,12 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
 
     protected virtual IMessage ConvertToMessage(BasicDeliverEventArgs envelope)
     {
-        var message = new Message(envelope.Body.ToArray(), DeserializeMessageBody)
+        // Zero-copy: envelope.Body is a pooled buffer that RabbitMQ.Client reclaims once OnMessageAsync
+        // returns. Referencing it without copying is safe because the body is deserialized synchronously
+        // within the awaited SendMessageToSubscribersAsync dispatch, before the handler returns. Per the
+        // IMessage.Data contract, the buffer is only valid for the duration of handling; consumers that
+        // retain the raw payload beyond the handler must copy it via ToArray().
+        var message = new Message(envelope.Body, DeserializeMessageBody)
         {
             Type = envelope.BasicProperties.Type,
             ClrType = GetMappedMessageType(envelope.BasicProperties.Type),
