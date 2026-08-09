@@ -3,11 +3,8 @@ using Projects;
 var builder = DistributedApplication.CreateBuilder(args);
 
 builder.AddRabbitMQ("messaging")
+    .WithImageTag("4.3.0")
     .WithManagementPlugin();
-
-builder.AddContainer("messaging-delayed", "foundatiorabbitmq-rabbitmq-delayed", "latest")
-    .WithEndpoint(targetPort: 5672, name: "amqp", scheme: "tcp")
-    .WithEndpoint(targetPort: 15672, name: "management", scheme: "http");
 
 var containerMemoryLimits = new[] { "384m", "448m", "512m" };
 var chaosHostnames = new[] { "chaos1", "chaos2", "chaos3" };
@@ -16,7 +13,7 @@ var chaosNodes = new List<IResourceBuilder<ContainerResource>>(3);
 for (int nodeIndex = 0; nodeIndex < 3; nodeIndex++)
 {
     string hostname = chaosHostnames[nodeIndex];
-    var chaosNode = builder.AddContainer($"chaos-{nodeIndex + 1}", "rabbitmq", "4.2.2-management")
+    var chaosNode = builder.AddContainer($"chaos-{nodeIndex + 1}", "rabbitmq", "4.3.0-management")
         .WithContainerNetworkAlias(hostname)
         .WithContainerRuntimeArgs($"--memory={containerMemoryLimits[nodeIndex]}", "--hostname", hostname)
         .WithEnvironment("RABBITMQ_DEFAULT_USER", "guest")

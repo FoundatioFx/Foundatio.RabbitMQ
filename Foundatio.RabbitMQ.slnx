@@ -6,8 +6,6 @@
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
     <File Path="build/common.props" />
-    <File Path="build/Dockerfile" />
-    <File Path="docker-compose.yml" />
     <File Path="README.md" />
     <File Path="tests/Directory.Build.props" />
   </Folder>

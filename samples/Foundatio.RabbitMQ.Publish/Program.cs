@@ -37,11 +37,6 @@ Option<bool> durableOption = new("--durable")
     Description = "Use durable queues that survive broker restarts"
 };
 
-Option<bool> delayedOption = new("--delayed")
-{
-    Description = "Use delayed exchange (connects to port 5673)"
-};
-
 Option<string> acknowledgmentStrategyOption = new("--acknowledgment-strategy")
 {
     Description = "Acknowledgment strategy: fireandforget or automatic",
@@ -95,7 +90,6 @@ RootCommand rootCommand = new("RabbitMQ Order Publisher Sample")
     hostsOption,
     topicOption,
     durableOption,
-    delayedOption,
     acknowledgmentStrategyOption,
     publisherConfirmsOption,
     messageSizeOption,
@@ -112,7 +106,6 @@ rootCommand.SetAction(parseResult =>
     string? hosts = parseResult.GetValue(hostsOption);
     string? topic = parseResult.GetValue(topicOption);
     bool durable = parseResult.GetValue(durableOption);
-    bool delayed = parseResult.GetValue(delayedOption);
     string? acknowledgmentStrategy = parseResult.GetValue(acknowledgmentStrategyOption);
     bool publisherConfirms = parseResult.GetValue(publisherConfirmsOption);
     int messageSize = parseResult.GetValue(messageSizeOption);
@@ -123,7 +116,7 @@ rootCommand.SetAction(parseResult =>
     LogLevel logLevel = parseResult.GetValue(logLevelOption);
 
     return RunPublisher(
-        connectionString, hosts, topic, durable, delayed, acknowledgmentStrategy, publisherConfirms,
+        connectionString, hosts, topic, durable, acknowledgmentStrategy, publisherConfirms,
         messageSize, prefetchCount, deliveryLimit, delaySeconds, interval, logLevel);
 });
 
@@ -134,7 +127,6 @@ static async Task RunPublisher(
     string? hosts,
     string? topic,
     bool durable,
-    bool delayed,
     string? acknowledgmentStrategy,
     bool publisherConfirms,
     int messageSize,
@@ -189,12 +181,6 @@ static async Task RunPublisher(
         }
     });
     var logger = loggerFactory.CreateLogger("Publisher");
-
-    if (delayed)
-    {
-        Uri uri = new(connectionString);
-        connectionString = new UriBuilder(uri) { Port = 5673 }.Uri.ToString();
-    }
 
     var ackStrategy = String.Equals("automatic", acknowledgmentStrategy, StringComparison.OrdinalIgnoreCase)
         ? AcknowledgementStrategy.Automatic
