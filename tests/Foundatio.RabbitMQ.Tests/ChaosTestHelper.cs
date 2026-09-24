@@ -1,5 +1,8 @@
 using System;
 using System.Diagnostics;
+using System.Linq;
+using Aspire.Hosting.ApplicationModel;
+using Microsoft.Extensions.DependencyInjection;
 using System.Threading;
 using System.Threading.Tasks;
 using Aspire.Hosting;
@@ -22,29 +25,29 @@ public class ChaosTestHelper
     public async Task FillDiskAsync(string resourceName, CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Setting disk_free_limit to 999GB on {Resource} to trigger alarm", resourceName);
-        var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
-        await DockerExecAsync(containerId, "rabbitmqctl set_disk_free_limit 999GB", cancellationToken);
+        var containerId = GetContainerName(resourceName);
+        _ = await DockerExecAsync(containerId, "rabbitmqctl set_disk_free_limit 999GB", cancellationToken);
     }
 
     public async Task ClearDiskAsync(string resourceName, CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Resetting disk_free_limit to 10MB on {Resource}", resourceName);
-        var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
-        await DockerExecAsync(containerId, "rabbitmqctl set_disk_free_limit 10MB", cancellationToken);
+        var containerId = GetContainerName(resourceName);
+        _ = await DockerExecAsync(containerId, "rabbitmqctl set_disk_free_limit 10MB", cancellationToken);
     }
 
     public async Task StopNodeAsync(string resourceName, CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Killing container for {Resource}", resourceName);
-        var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
-        await RunDockerCommandAsync($"kill {containerId}", cancellationToken);
+        var containerId = GetContainerName(resourceName);
+        _ = await RunDockerCommandAsync($"kill {containerId}", cancellationToken);
     }
 
     public async Task StartNodeAsync(string resourceName, CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Starting container for {Resource}", resourceName);
-        var containerId = await GetContainerIdAsync(resourceName, includeExited: true, cancellationToken: cancellationToken);
-        await RunDockerCommandAsync($"start {containerId}", cancellationToken);
+        var containerId = GetContainerName(resourceName);
+        _ = await RunDockerCommandAsync($"start {containerId}", cancellationToken);
     }
 
     public async Task WaitForNodeReadyAsync(string resourceName, TimeSpan timeout, CancellationToken cancellationToken = default)
@@ -57,7 +60,7 @@ public class ChaosTestHelper
         {
             try
             {
-                var containerId = await GetContainerIdAsync(resourceName, cancellationToken: linkedToken);
+                var containerId = GetContainerName(resourceName);
                 var output = await DockerExecAsync(containerId, "rabbitmqctl status", linkedToken);
                 if (output.Contains("pid", StringComparison.OrdinalIgnoreCase))
                     return;
@@ -79,7 +82,7 @@ public class ChaosTestHelper
 
     public async Task<bool> HasDiskAlarmAsync(string resourceName, CancellationToken cancellationToken = default)
     {
-        var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
+        var containerId = GetContainerName(resourceName);
         var output = await DockerExecAsync(containerId, "rabbitmqctl status", cancellationToken);
         return output.Contains("disk space alarm", StringComparison.OrdinalIgnoreCase);
     }
@@ -113,8 +116,8 @@ public class ChaosTestHelper
     public async Task TriggerMemoryAlarmAsync(string resourceName, CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Setting vm_memory_high_watermark to 0.0001 on {Resource} to trigger memory alarm", resourceName);
-        var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
-        await DockerExecAsync(containerId, "rabbitmqctl set_vm_memory_high_watermark 0.0001", cancellationToken);
+        var containerId = GetContainerName(resourceName);
+        _ = await DockerExecAsync(containerId, "rabbitmqctl set_vm_memory_high_watermark 0.0001", cancellationToken);
     }
 
     private const string TestResetMemoryWatermark = "0.8";
@@ -122,15 +125,15 @@ public class ChaosTestHelper
     public async Task ClearMemoryAlarmAsync(string resourceName, CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Resetting vm_memory_high_watermark to test default ({Watermark}) on {Resource}", TestResetMemoryWatermark, resourceName);
-        var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
-        await DockerExecAsync(containerId, $"rabbitmqctl set_vm_memory_high_watermark {TestResetMemoryWatermark}", cancellationToken);
+        var containerId = GetContainerName(resourceName);
+        _ = await DockerExecAsync(containerId, $"rabbitmqctl set_vm_memory_high_watermark {TestResetMemoryWatermark}", cancellationToken);
     }
 
     public async Task CloseAllConnectionsAsync(string resourceName, CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Force-closing all connections on {Resource}", resourceName);
-        var containerId = await GetContainerIdAsync(resourceName, cancellationToken: cancellationToken);
-        await DockerExecAsync(containerId, "rabbitmqctl close_all_connections chaos-test", cancellationToken);
+        var containerId = GetContainerName(resourceName);
+        _ = await DockerExecAsync(containerId, "rabbitmqctl close_all_connections chaos-test", cancellationToken);
     }
 
     public string GetConnectionString(string resourceName)
@@ -139,21 +142,11 @@ public class ChaosTestHelper
         return $"amqp://guest:guest@{endpoint.Host}:{endpoint.Port}";
     }
 
-    private async Task<string> GetContainerIdAsync(string resourceName, bool includeExited = false, CancellationToken cancellationToken = default)
+    private string GetContainerName(string resourceName)
     {
-        var flags = includeExited ? "ps -aq" : "ps -q";
-        var output = await RunDockerCommandAsync(
-            $"{flags} --filter \"name={resourceName}\"",
-            cancellationToken);
-
-        var containerIds = output.Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        if (containerIds.Length == 0)
-            throw new InvalidOperationException($"Container for resource '{resourceName}' not found");
-
-        if (containerIds.Length > 1)
-            _logger.LogWarning("Multiple containers matched '{Resource}', using first: {ContainerId}", resourceName, containerIds[0]);
-
-        return containerIds[0].Trim();
+        var model = _app.Services.GetRequiredService<DistributedApplicationModel>();
+        var resource = model.Resources.OfType<ContainerResource>().Single(resource => resource.Name == resourceName);
+        return resource.Annotations.OfType<ContainerNameAnnotation>().Single().Name;
     }
 
     private static Task<string> DockerExecAsync(string containerId, string command, CancellationToken cancellationToken)
