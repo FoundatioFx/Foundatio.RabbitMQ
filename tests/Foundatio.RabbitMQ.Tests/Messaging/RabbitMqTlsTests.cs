@@ -23,6 +23,8 @@ public class RabbitMqTlsTests(AspireFixture fixture, ITestOutputHelper output) :
     [InlineData(true)]
     public async Task CreateConnectionAsync_WithInvalidCertificate_RejectsExpectedAuthenticationFailureAsync(bool untrustedChain)
     {
+        Assert.SkipWhen(String.IsNullOrEmpty(fixture.TlsConnectionString), "RabbitMQ TLS infrastructure not available");
+
         // Arrange
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(60));
@@ -60,6 +62,8 @@ public class RabbitMqTlsTests(AspireFixture fixture, ITestOutputHelper output) :
     [InlineData(2)]
     public async Task CreateConnectionAsync_WithProviderEndpoints_ConnectsToTlsOnlyBrokerAsync(int replacementHostCount)
     {
+        Assert.SkipWhen(String.IsNullOrEmpty(fixture.TlsConnectionString), "RabbitMQ TLS infrastructure not available");
+
         // Arrange
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
@@ -79,6 +83,8 @@ public class RabbitMqTlsTests(AspireFixture fixture, ITestOutputHelper output) :
     [Fact]
     public async Task PublishAsync_WithTlsPublisherAndSubscriber_DeliversIdentifiedMessageAsync()
     {
+        Assert.SkipWhen(String.IsNullOrEmpty(fixture.TlsConnectionString), "RabbitMQ TLS infrastructure not available");
+
         // Arrange
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(60));
@@ -182,7 +188,6 @@ public class RabbitMqTlsTests(AspireFixture fixture, ITestOutputHelper output) :
 
     private Uri GetBrokerUri(string? value)
     {
-        Assert.SkipWhen(String.IsNullOrEmpty(fixture.TlsConnectionString), "RabbitMQ TLS infrastructure not available");
         Assert.True(Uri.TryCreate(value, UriKind.Absolute, out var uri), "The Aspire fixture must provide its TLS broker URI.");
         Assert.Equal("amqps", uri!.Scheme);
         Assert.True(uri.IsLoopback, "TLS verification only connects to test-owned loopback brokers.");

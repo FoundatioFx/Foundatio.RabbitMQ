@@ -20,8 +20,9 @@ public class RabbitMqBrokerVersionTests(AspireFixture fixture, ITestOutputHelper
     [InlineData("messaging-tls")]
     public async Task CreateConnectionAsync_WithConfiguredBroker_UsesVersion425Async(string resource)
     {
-        // Arrange
         Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
+
+        // Arrange
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
         string? connectionString = resource switch
