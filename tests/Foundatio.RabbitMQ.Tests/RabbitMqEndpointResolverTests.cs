@@ -10,27 +10,6 @@ namespace Foundatio.RabbitMQ.Tests;
 public class RabbitMqEndpointResolverTests(ITestOutputHelper output) : TestWithLoggingBase(output)
 {
     [Theory]
-    [InlineData("amqp://localhost", 5672, false)]
-    [InlineData("amqps://localhost", 5671, true)]
-    [InlineData("amqps://localhost:5680", 5680, true)]
-    public void CreateEndpoints_WithoutReplacementHosts_UsesFactoryEndpoint(string uri, int port, bool useTls)
-    {
-        // Arrange
-        var factory = new ConnectionFactory { Uri = new Uri(uri) };
-
-        // Act
-        var endpoints = RabbitMQEndpointResolver.CreateEndpoints(factory);
-
-        // Assert
-        var endpoint = Assert.Single(endpoints);
-        Assert.Equal("localhost", endpoint.HostName);
-        Assert.Equal(port, endpoint.Port);
-        Assert.Equal(useTls, endpoint.Ssl.Enabled);
-        Assert.Equal("localhost", endpoint.Ssl.ServerName);
-        Assert.Equal(SslPolicyErrors.None, endpoint.Ssl.AcceptablePolicyErrors);
-    }
-
-    [Theory]
     [InlineData("broker:0")]
     [InlineData("broker:65536")]
     [InlineData("broker:")]
@@ -61,6 +40,27 @@ public class RabbitMqEndpointResolverTests(ITestOutputHelper output) : TestWithL
 
         // Assert
         Assert.IsType<ArgumentNullException>(exception);
+    }
+
+    [Theory]
+    [InlineData("amqp://localhost", 5672, false)]
+    [InlineData("amqps://localhost", 5671, true)]
+    [InlineData("amqps://localhost:5680", 5680, true)]
+    public void CreateEndpoints_WithoutReplacementHosts_UsesFactoryEndpoint(string uri, int port, bool useTls)
+    {
+        // Arrange
+        var factory = new ConnectionFactory { Uri = new Uri(uri) };
+
+        // Act
+        var endpoints = RabbitMQEndpointResolver.CreateEndpoints(factory);
+
+        // Assert
+        var endpoint = Assert.Single(endpoints);
+        Assert.Equal("localhost", endpoint.HostName);
+        Assert.Equal(port, endpoint.Port);
+        Assert.Equal(useTls, endpoint.Ssl.Enabled);
+        Assert.Equal("localhost", endpoint.Ssl.ServerName);
+        Assert.Equal(SslPolicyErrors.None, endpoint.Ssl.AcceptablePolicyErrors);
     }
 
     [Theory]
