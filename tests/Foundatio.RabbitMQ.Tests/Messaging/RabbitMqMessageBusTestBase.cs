@@ -189,7 +189,6 @@ public abstract class RabbitMqMessageBusTestBase(string connectionString, ITestO
         return base.PublishAsync_WithDeliveryDelayExtension_DelaysDeliveryAsync();
     }
 
-
     [Fact]
     public override Task PublishAsync_WithDelayedMessageAndDisposeBeforeDelivery_DiscardsMessageAsync()
     {

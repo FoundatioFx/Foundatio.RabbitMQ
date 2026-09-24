@@ -429,11 +429,11 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
     }
 
     /// <summary>
-    /// Configures classic queue priority. Messages published with higher priority are
-    /// delivered to consumers before lower-priority messages.
-    /// Does not configure or cap quorum queue priority levels.
+    /// Sets x-max-priority for classic queues only. RabbitMQ 4.2 quorum queues use
+    /// normal/high tiers; RabbitMQ 4.3+ quorum queues have 32 strict levels without
+    /// configuration. This option does not configure or cap quorum priorities.
     /// </summary>
-    /// <param name="maxPriority">Maximum priority levels (1-32). Default: 32.</param>
+    /// <param name="maxPriority">Classic queue maximum priority (1-32). Default: 32.</param>
     public RabbitMQMessageBusOptionsBuilder UseMessagePriority(byte maxPriority = 32)
     {
         ArgumentOutOfRangeException.ThrowIfZero(maxPriority);
