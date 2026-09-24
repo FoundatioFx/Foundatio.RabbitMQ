@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Foundatio.AsyncEx;
@@ -9,6 +10,7 @@ using Foundatio.Tests.Extensions;
 using Foundatio.Tests.Messaging;
 using Foundatio.Xunit;
 using Microsoft.Extensions.Logging;
+using RabbitMQ.Client;
 using Xunit;
 
 namespace Foundatio.RabbitMQ.Tests.Messaging;
@@ -537,6 +539,13 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
             _logger.LogInformation("Messages delivered to subscriber1 before kill: {Count}", firstDeliveries.Count);
 
             // Act
+            Assert.NotEmpty(firstDeliveries);
+            var field = typeof(RabbitMQMessageBus).GetField("_subscriberConnection", BindingFlags.Instance | BindingFlags.NonPublic);
+            var connection = Assert.IsAssignableFrom<IConnection>(field?.GetValue(subscriber1));
+            string connectedNode = new[] { "chaos-1", "chaos-2", "chaos-3" }
+                .Single(node => new Uri(Chaos.GetConnectionString(node)).Port == connection.Endpoint.Port);
+            await Chaos.CloseAllConnectionsAsync(connectedNode, TestCancellationToken);
+            holdGate.Set();
             await subscriber1.DisposeAsync();
             subscriber1 = null;
 
