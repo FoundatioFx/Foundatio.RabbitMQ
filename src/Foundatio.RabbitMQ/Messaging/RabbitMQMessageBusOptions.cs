@@ -171,10 +171,10 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     public bool SingleActiveConsumer { get; set; }
 
     /// <summary>
-    /// Maximum number of priority levels for the queue (1-32).
+    /// Maximum number of priority levels for classic queues (1-32).
     /// Messages published with a higher priority value are delivered to consumers before lower-priority messages.
-    /// RabbitMQ 4.3+ quorum queues support 32 strict priority levels.
-    /// Set via the x-max-priority queue argument.
+    /// Set via the x-max-priority queue argument for classic queues only.
+    /// Quorum queues use their broker-defined priority behavior without this argument.
     /// See: https://www.rabbitmq.com/docs/priority
     /// </summary>
     public byte? MaxPriority { get; set; }
@@ -429,9 +429,9 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
     }
 
     /// <summary>
-    /// Enables message priority on the queue. Messages published with higher priority are
+    /// Configures classic queue priority. Messages published with higher priority are
     /// delivered to consumers before lower-priority messages.
-    /// RabbitMQ 4.3+ quorum queues support up to 32 strict priority levels.
+    /// Does not configure or cap quorum queue priority levels.
     /// </summary>
     /// <param name="maxPriority">Maximum priority levels (1-32). Default: 32.</param>
     public RabbitMQMessageBusOptionsBuilder UseMessagePriority(byte maxPriority = 32)

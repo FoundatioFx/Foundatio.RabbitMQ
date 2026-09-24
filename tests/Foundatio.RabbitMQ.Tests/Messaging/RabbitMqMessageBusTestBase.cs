@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,6 +10,7 @@ using Foundatio.Messaging;
 using Foundatio.Tests.Extensions;
 using Foundatio.Tests.Messaging;
 using Microsoft.Extensions.Logging;
+using RabbitMQ.Client;
 using Xunit;
 
 namespace Foundatio.RabbitMQ.Tests.Messaging;
@@ -186,6 +189,7 @@ public abstract class RabbitMqMessageBusTestBase(string connectionString, ITestO
         return base.PublishAsync_WithDeliveryDelayExtension_DelaysDeliveryAsync();
     }
 
+
     [Fact]
     public override Task PublishAsync_WithDelayedMessageAndDisposeBeforeDelivery_DiscardsMessageAsync()
     {
@@ -283,50 +287,28 @@ public abstract class RabbitMqMessageBusTestBase(string connectionString, ITestO
     }
 
     [Fact]
-    public async Task PublishAsync_WithPriority_DeliversHighPriorityFirst()
+    public Task PublishAsync_WithPriority_DeliversHighPriorityFirst()
     {
-        Assert.SkipWhen(string.IsNullOrEmpty(ConnectionString), "RabbitMQ infrastructure not available");
-
         // Arrange
-        string topic = $"test_topic_priority_{DateTime.UtcNow.Ticks}";
-        string queueName = $"{topic}_{Guid.NewGuid():N}";
-
-        await using var publisher = new RabbitMQMessageBus(o => o
-            .ConnectionString(ConnectionString)
-            .SubscriptionQueueName(queueName)
-            .AcknowledgementStrategy(AcknowledgementStrategy.Automatic)
-            .UseQuorumQueues()
-            .UseMessagePriority()
-            .PrefetchCount(1)
-            .LoggerFactory(Log));
-
-        await publisher.PublishAsync(new SimpleMessageA { Data = "low" },
-            new MessageOptions { Properties = { ["Priority"] = "1" } }, TestCancellationToken);
-        await publisher.PublishAsync(new SimpleMessageA { Data = "high" },
-            new MessageOptions { Properties = { ["Priority"] = "10" } }, TestCancellationToken);
-        await publisher.PublishAsync(new SimpleMessageA { Data = "medium" },
-            new MessageOptions { Properties = { ["Priority"] = "5" } }, TestCancellationToken);
-
-        await Task.Delay(TimeSpan.FromMilliseconds(500), TestCancellationToken);
-
-        var received = new ConcurrentQueue<string>();
-        var countdownEvent = new AsyncCountdownEvent(3);
-
-        // Act
-        await publisher.SubscribeAsync<SimpleMessageA>(msg =>
-        {
-            received.Enqueue(msg.Data!);
-            countdownEvent.Signal();
-        }, TestCancellationToken);
-
-        await countdownEvent.WaitAsync(TimeSpan.FromSeconds(10));
-
-        // Assert
-        var messages = received.ToArray();
-        Assert.Equal(3, messages.Length);
-        Assert.Equal("high", messages[0]);
-        Assert.Equal("medium", messages[1]);
-        Assert.Equal("low", messages[2]);
+        Assert.SkipWhen(string.IsNullOrEmpty(ConnectionString), "RabbitMQ infrastructure not available");
+        // Act and Assert: the shared check verifies broker ordering.
+        return VerifyPriorityAsync(ConnectionString, (topic, queueName) =>
+            Assert.IsType<RabbitMQMessageBus>(GetMessageBus(options =>
+            {
+                var rabbitOptions = Assert.IsType<RabbitMQMessageBusOptions>(options);
+                rabbitOptions.Topic = topic;
+                rabbitOptions.SubscriptionQueueName = queueName;
+                rabbitOptions.IsDurable = true;
+                rabbitOptions.IsSubscriptionQueueExclusive = false;
+                rabbitOptions.SubscriptionQueueAutoDelete = false;
+                rabbitOptions.AcknowledgementStrategy = AcknowledgementStrategy.Automatic;
+                rabbitOptions.PrefetchCount = 1;
+                rabbitOptions.PublisherConfirmsEnabled = true;
+                rabbitOptions.MaxPriority = 32;
+                rabbitOptions.Arguments ??= new Dictionary<string, object?>();
+                rabbitOptions.Arguments.TryAdd("x-queue-type", "classic");
+                return rabbitOptions;
+            })), fullRange: false, TestCancellationToken);
     }
 
     [Fact]
@@ -394,5 +376,72 @@ public abstract class RabbitMqMessageBusTestBase(string connectionString, ITestO
         Assert.Equal(0, countdownEvent.CurrentCount);
 
         await messageBus2.DisposeAsync();
+    }
+
+    internal static async Task VerifyPriorityAsync(string connectionString,
+        Func<string, string, RabbitMQMessageBus> createMessageBus, bool fullRange, CancellationToken cancellationToken)
+    {
+        // Arrange
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(60));
+        var token = timeout.Token;
+        string topic = $"priority-{Guid.NewGuid():N}";
+        string queueName = $"{topic}-subscription";
+        var factory = new ConnectionFactory { Uri = new Uri(connectionString), AutomaticRecoveryEnabled = false };
+        await using var adminConnection = await factory.CreateConnectionAsync(token);
+        await using var admin = await adminConnection.CreateChannelAsync(cancellationToken: token);
+        Assert.Equal(new Version(4, 2, 5), RabbitMQMessageBus.ParseServerVersion(adminConnection.ServerProperties));
+
+        (string Id, byte Priority)[] publications = fullRange
+            ? Enumerable.Range(0, 32).Select(priority => ($"priority-{priority}", (byte)priority)).ToArray()
+            : [("low", 1), ("high", 10), ("medium", 5)];
+        // The client omits zero; 4.2.5 uses normal priority for omitted quorum
+        // priorities and level zero for classic queues.
+        Assert.False(new BasicProperties { Priority = 0 }.IsPriorityPresent());
+        string[] expected = publications.OrderByDescending(message => message.Priority)
+            .Select(message => message.Id).ToArray();
+
+        try
+        {
+            // Provision through the provider, then remove the setup consumer so the
+            // ordering assertion observes a complete backlog rather than live arrivals.
+            await using (var setup = createMessageBus(topic, queueName))
+            {
+                await setup.SubscribeAsync<SimpleMessageA>((_, _) => Task.CompletedTask, cancellationToken: token);
+            }
+
+            await using var publisher = createMessageBus(topic, queueName);
+            foreach (var message in publications)
+            {
+                await publisher.PublishAsync(new SimpleMessageA { Data = message.Id },
+                    new MessageOptions { Properties = { ["Priority"] = message.Priority.ToString(CultureInfo.InvariantCulture) } }, token);
+            }
+
+            var queued = await admin.QueueDeclarePassiveAsync(queueName, token);
+            Assert.Equal(0u, queued.ConsumerCount);
+            Assert.Equal((uint)expected.Length, queued.MessageCount);
+
+            var received = new ConcurrentQueue<string>();
+            var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            await using var subscriber = createMessageBus(topic, queueName);
+            // Act
+            await subscriber.SubscribeAsync<SimpleMessageA>(message =>
+            {
+                received.Enqueue(message.Data!);
+                if (received.Count == expected.Length)
+                    completed.TrySetResult();
+            }, token);
+
+            await completed.Task.WaitAsync(token);
+            // Assert
+            Assert.Equal(expected, received.ToArray());
+            Assert.Equal(0u, (await admin.QueueDeclarePassiveAsync(queueName, token)).MessageCount);
+        }
+        finally
+        {
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await admin.QueueDeleteAsync(queueName, cancellationToken: cleanup.Token);
+            await admin.ExchangeDeleteAsync(topic, cancellationToken: cleanup.Token);
+        }
     }
 }

@@ -817,7 +817,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         if (_options.SingleActiveConsumer)
             arguments["x-single-active-consumer"] = true;
 
-        if (_options.MaxPriority.HasValue)
+        if (_options.MaxPriority.HasValue && !_isQuorumQueue)
             arguments["x-max-priority"] = (int)_options.MaxPriority.Value;
 
         if (_options.DelayedRetryType.HasValue)
