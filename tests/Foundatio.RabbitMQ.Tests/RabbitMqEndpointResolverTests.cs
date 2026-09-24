@@ -1,5 +1,6 @@
 using System;
 using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
 using Foundatio.Utility;
 using Foundatio.Xunit;
 using RabbitMQ.Client;
@@ -83,5 +84,40 @@ public class RabbitMqEndpointResolverTests(ITestOutputHelper output) : TestWithL
         Assert.True(endpoint.Ssl.Enabled);
         Assert.Equal(hostname, endpoint.Ssl.ServerName);
         Assert.Equal(SslPolicyErrors.None, endpoint.Ssl.AcceptablePolicyErrors);
+    }
+
+    [Fact]
+    public void CreateEndpoints_WithTlsClientCertificate_PreservesClientAuthentication()
+    {
+        // Arrange
+        var certificates = new X509CertificateCollection();
+        var factory = new ConnectionFactory { Uri = new Uri("amqps://localhost") };
+        factory.Ssl.Certs = certificates;
+        factory.Ssl.CertPath = "client.pfx";
+        factory.Ssl.CertPassphrase = "test-password";
+
+        // Act
+        var endpoint = Assert.Single(RabbitMQEndpointResolver.CreateEndpoints(factory, ["broker"]));
+
+        // Assert
+        Assert.Same(certificates, endpoint.Ssl.Certs);
+        Assert.Equal("client.pfx", endpoint.Ssl.CertPath);
+        Assert.Equal("test-password", endpoint.Ssl.CertPassphrase);
+        Assert.Equal("broker", endpoint.Ssl.ServerName);
+        Assert.Equal(SslPolicyErrors.None, endpoint.Ssl.AcceptablePolicyErrors);
+    }
+
+    [Fact]
+    public void CreateEndpoints_WithCustomServerValidation_RejectsUnsupportedPolicy()
+    {
+        // Arrange
+        var factory = new ConnectionFactory { Uri = new Uri("amqps://localhost") };
+        factory.Ssl.CertificateValidationCallback = (_, _, _, _) => true;
+
+        // Act
+        var exception = Record.Exception(() => RabbitMQEndpointResolver.CreateEndpoints(factory));
+
+        // Assert
+        Assert.IsType<ArgumentException>(exception);
     }
 }

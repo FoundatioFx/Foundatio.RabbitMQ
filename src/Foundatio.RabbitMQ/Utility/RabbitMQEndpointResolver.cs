@@ -10,11 +10,14 @@ namespace Foundatio.Utility;
 public static class RabbitMQEndpointResolver
 {
     /// <summary>Uses replacement hosts when supplied, or the factory URI endpoint otherwise.</summary>
-    /// <remarks>Each TLS endpoint validates its own hostname and certificate chain. Empty host entries are ignored;
+    /// <remarks>Each TLS endpoint validates its own hostname and certificate chain. Client certificates are preserved;
+    /// permissive policy errors from the URI are overridden and custom server-validation callbacks are rejected. Empty host entries are ignored;
     /// malformed endpoints are rejected. Host entries may include a port, with brackets required around IPv6 when specifying one.</remarks>
     public static List<AmqpTcpEndpoint> CreateEndpoints(ConnectionFactory factory, IList<string>? hosts = null)
     {
         ArgumentNullException.ThrowIfNull(factory);
+        if (factory.Ssl.CertificateValidationCallback is not null)
+            throw new ArgumentException("Endpoint resolution requires default server certificate validation.", nameof(factory));
         var connectionUri = factory.Uri;
         int defaultPort = factory.Ssl.Enabled ? 5671 : 5672;
         var endpoints = new List<AmqpTcpEndpoint>(hosts is { Count: > 0 } ? hosts.Count : 1);
@@ -55,7 +58,12 @@ public static class RabbitMQEndpointResolver
         {
             Version = factory.Ssl.Version,
             AcceptablePolicyErrors = SslPolicyErrors.None,
-            CheckCertificateRevocation = factory.Ssl.CheckCertificateRevocation
+            CheckCertificateRevocation = factory.Ssl.CheckCertificateRevocation,
+            CertPath = factory.Ssl.CertPath,
+            CertPassphrase = factory.Ssl.CertPassphrase,
+            Certs = factory.Ssl.Certs,
+            CertificateSelectionCallback = factory.Ssl.CertificateSelectionCallback,
+            ClientCertificateContext = factory.Ssl.ClientCertificateContext
         };
 
         return new AmqpTcpEndpoint(hostname, port, ssl, factory.MaxInboundMessageBodySize);
