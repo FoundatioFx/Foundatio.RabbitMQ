@@ -10,6 +10,20 @@ namespace Foundatio.RabbitMQ.Tests;
 
 public class RabbitMqEndpointResolverTests(ITestOutputHelper output) : TestWithLoggingBase(output)
 {
+    [Fact]
+    public void CreateEndpoints_WithCustomServerValidation_RejectsUnsupportedPolicy()
+    {
+        // Arrange
+        var factory = new ConnectionFactory { Uri = new Uri("amqps://localhost") };
+        factory.Ssl.CertificateValidationCallback = (_, _, _, _) => true;
+
+        // Act
+        var exception = Record.Exception(() => RabbitMQEndpointResolver.CreateEndpoints(factory));
+
+        // Assert
+        Assert.IsType<ArgumentException>(exception);
+    }
+
     [Theory]
     [InlineData("broker:0")]
     [InlineData("broker:65536")]
@@ -105,19 +119,5 @@ public class RabbitMqEndpointResolverTests(ITestOutputHelper output) : TestWithL
         Assert.Equal("test-password", endpoint.Ssl.CertPassphrase);
         Assert.Equal("broker", endpoint.Ssl.ServerName);
         Assert.Equal(SslPolicyErrors.None, endpoint.Ssl.AcceptablePolicyErrors);
-    }
-
-    [Fact]
-    public void CreateEndpoints_WithCustomServerValidation_RejectsUnsupportedPolicy()
-    {
-        // Arrange
-        var factory = new ConnectionFactory { Uri = new Uri("amqps://localhost") };
-        factory.Ssl.CertificateValidationCallback = (_, _, _, _) => true;
-
-        // Act
-        var exception = Record.Exception(() => RabbitMQEndpointResolver.CreateEndpoints(factory));
-
-        // Assert
-        Assert.IsType<ArgumentException>(exception);
     }
 }
