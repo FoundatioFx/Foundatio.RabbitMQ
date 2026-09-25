@@ -57,6 +57,34 @@ public class RabbitMqEndpointResolverTests(ITestOutputHelper output) : TestWithL
         Assert.IsType<ArgumentNullException>(exception);
     }
 
+    [Fact]
+    public void CreateEndpoints_WithOutOfRangeFactoryPort_ThrowsArgumentOutOfRangeException()
+    {
+        // Arrange
+        var factory = new ConnectionFactory { Uri = new Uri("amqps://localhost:0") };
+
+        // Act
+        var exception = Record.Exception(() => RabbitMQEndpointResolver.CreateEndpoints(factory));
+
+        // Assert
+        Assert.IsType<ArgumentOutOfRangeException>(exception);
+    }
+
+    [Theory]
+    [InlineData("broker:0")]
+    [InlineData("broker:65536")]
+    public void CreateEndpoints_WithOutOfRangeReplacementPort_ThrowsArgumentOutOfRangeException(string host)
+    {
+        // Arrange
+        var factory = new ConnectionFactory { Uri = new Uri("amqps://localhost") };
+
+        // Act
+        var exception = Record.Exception(() => RabbitMQEndpointResolver.CreateEndpoints(factory, [host]));
+
+        // Assert
+        Assert.IsType<ArgumentOutOfRangeException>(exception);
+    }
+
     [Theory]
     [InlineData("amqp://localhost", 5672, false)]
     [InlineData("amqps://localhost", 5671, true)]

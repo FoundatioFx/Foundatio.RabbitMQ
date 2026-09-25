@@ -16,8 +16,10 @@ public static class RabbitMQEndpointResolver
     public static List<AmqpTcpEndpoint> CreateEndpoints(ConnectionFactory factory, IList<string>? hosts = null)
     {
         ArgumentNullException.ThrowIfNull(factory);
+
         if (factory.Ssl.CertificateValidationCallback is not null)
             throw new ArgumentException("Endpoint resolution requires default server certificate validation.", nameof(factory));
+
         var connectionUri = factory.Uri;
         int defaultPort = factory.Ssl.Enabled ? 5671 : 5672;
         var endpoints = new List<AmqpTcpEndpoint>(hosts is { Count: > 0 } ? hosts.Count : 1);
@@ -29,7 +31,7 @@ public static class RabbitMQEndpointResolver
             return endpoints;
         }
 
-        var seenEndpoints = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenEndpoints = new HashSet<string>(hosts.Count, StringComparer.OrdinalIgnoreCase);
         foreach (string host in hosts)
         {
             if (String.IsNullOrWhiteSpace(host))
@@ -49,8 +51,10 @@ public static class RabbitMQEndpointResolver
 
     private static AmqpTcpEndpoint CreateEndpoint(ConnectionFactory factory, string hostname, int port, string parameterName)
     {
-        if (Uri.CheckHostName(hostname) == UriHostNameType.Unknown || port is < 1 or > 65535)
-            throw new ArgumentException("An endpoint must contain a valid hostname or IP address and a port from 1 to 65535.", parameterName);
+        if (Uri.CheckHostName(hostname) == UriHostNameType.Unknown)
+            throw new ArgumentException("An endpoint must contain a valid hostname or IP address.", parameterName);
+        if (port is < 1 or > 65535)
+            throw new ArgumentOutOfRangeException(parameterName, port, "The endpoint port must be from 1 to 65535.");
 
         // Explicit endpoints do not inherit ConnectionFactory.Ssl. Give every endpoint its own
         // policy and verify the name actually used to connect, including replacement hosts.
@@ -99,9 +103,10 @@ public static class RabbitMQEndpointResolver
 
     private static int ParsePort(string value)
     {
-        if (!Int32.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int port)
-            || port is < 1 or > 65535)
+        if (!Int32.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int port))
             throw InvalidHost();
+        if (port is < 1 or > 65535)
+            throw new ArgumentOutOfRangeException("hosts", port, "The endpoint port must be from 1 to 65535.");
 
         return port;
     }
