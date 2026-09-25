@@ -14,6 +14,7 @@
   <Folder Name="/Tests/">
     <Project Path="tests/Foundatio.RabbitMQ.Tests/Foundatio.RabbitMQ.Tests.csproj" />
     <Project Path="tests/Foundatio.RabbitMQ.AppHost/Foundatio.RabbitMQ.AppHost.csproj" />
+    <Project Path="tests/Foundatio.RabbitMQ.ProcessProbe/Foundatio.RabbitMQ.ProcessProbe.csproj" />
   </Folder>
   <Project Path="src/Foundatio.RabbitMQ/Foundatio.RabbitMQ.csproj" />
 </Solution>

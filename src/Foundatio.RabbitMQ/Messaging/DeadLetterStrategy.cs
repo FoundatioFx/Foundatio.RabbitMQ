@@ -18,7 +18,9 @@ public enum DeadLetterStrategy
     AtMostOnce,
 
     /// <summary>
-    /// Guarantees message transfer to the dead-letter exchange using internal publisher confirms.
+    /// Retains broker-managed dead letters until target queues confirm acceptance; duplicates remain possible.
+    /// Applies only to source quorum queues, not provider-managed terminal handoffs.
+    /// Destination durability and availability remain separate requirements.
     /// Requires overflow to be set to reject-publish (not drop-head).
     /// Uses more memory and CPU. Only enable when dead-lettered messages must not be lost.
     /// </summary>
