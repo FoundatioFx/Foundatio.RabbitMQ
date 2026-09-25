@@ -53,6 +53,8 @@ Option<bool> publisherConfirmsOption = new("--publisher-confirms")
     Description = "Wait for broker confirmation before returning (guarantees delivery)"
 };
 
+Option<bool> requireRoutingOption = new("--require-routing") { Description = "Require at least one route for immediate publishing" };
+
 Option<int> messageSizeOption = new("--message-size")
 {
     Description = "Target message size in bytes (pads Notes field to reach size)",
@@ -98,6 +100,7 @@ RootCommand rootCommand = new("RabbitMQ Order Publisher Sample")
     delayedOption,
     acknowledgmentStrategyOption,
     publisherConfirmsOption,
+    requireRoutingOption,
     messageSizeOption,
     prefetchCountOption,
     deliveryLimitOption,
@@ -115,6 +118,7 @@ rootCommand.SetAction(parseResult =>
     bool delayed = parseResult.GetValue(delayedOption);
     string? acknowledgmentStrategy = parseResult.GetValue(acknowledgmentStrategyOption);
     bool publisherConfirms = parseResult.GetValue(publisherConfirmsOption);
+    bool requireRouting = parseResult.GetValue(requireRoutingOption);
     int messageSize = parseResult.GetValue(messageSizeOption);
     ushort prefetchCount = parseResult.GetValue(prefetchCountOption);
     long deliveryLimit = parseResult.GetValue(deliveryLimitOption);
@@ -123,7 +127,7 @@ rootCommand.SetAction(parseResult =>
     LogLevel logLevel = parseResult.GetValue(logLevelOption);
 
     return RunPublisher(
-        connectionString, hosts, topic, durable, delayed, acknowledgmentStrategy, publisherConfirms,
+        connectionString, hosts, topic, durable, delayed, acknowledgmentStrategy, publisherConfirms, requireRouting,
         messageSize, prefetchCount, deliveryLimit, delaySeconds, interval, logLevel);
 });
 
@@ -137,6 +141,7 @@ static async Task RunPublisher(
     bool delayed,
     string? acknowledgmentStrategy,
     bool publisherConfirms,
+    bool requireRouting,
     int messageSize,
     ushort prefetchCount,
     long deliveryLimit,
@@ -226,11 +231,12 @@ static async Task RunPublisher(
         PrefetchCount = prefetchCount,
         DeliveryLimit = deliveryLimit,
         PublisherConfirmsEnabled = publisherConfirms,
+        RequirePublishRouting = requireRouting,
         LoggerFactory = loggerFactory
     };
 
-    logger.LogInformation("Config: ConnectionString={ConnectionString}, Topic={Topic}, Durable={Durable}, AckStrategy={AckStrategy}, PublisherConfirms={PublisherConfirms}, MessageSize={MessageSize}, Interval={Interval}ms, DelaySeconds={DelaySeconds}",
-        connectionString, topic, durable, ackStrategy, publisherConfirms, messageSize, interval, delaySeconds);
+    logger.LogInformation("Config: Topic={Topic}, Durable={Durable}, AckStrategy={AckStrategy}, PublisherConfirms={PublisherConfirms}, RequireRouting={RequireRouting}, MessageSize={MessageSize}, Interval={Interval}ms, DelaySeconds={DelaySeconds}",
+        topic, durable, ackStrategy, publisherConfirms, requireRouting, messageSize, interval, delaySeconds);
     if (hostsList.Count > 0)
         logger.LogInformation("Hosts: {Hosts}", String.Join(", ", hostsList));
 
@@ -270,7 +276,7 @@ static async Task RunPublisher(
             catch (Foundatio.Messaging.MessageBusException ex)
             {
                 ++failCount;
-                logger.LogWarning(ex, "Publish failed (order #{Seq}), retrying in {Interval}ms...", orderCount, interval);
+                logger.LogWarning(ex, "Publish failed (order #{Seq}); next sample order in {Interval}ms. Failed orders are not replayed.", orderCount, interval);
             }
 
             if (statsTimer.Elapsed >= TimeSpan.FromSeconds(10))
