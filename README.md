@@ -5,7 +5,9 @@
 [![feedz.io](https://img.shields.io/badge/endpoint.svg?url=https%3A%2F%2Ff.feedz.io%2Ffoundatio%2Ffoundatio%2Fshield%2FFoundatio.RabbitMQ%2Flatest)](https://f.feedz.io/foundatio/foundatio/packages/Foundatio.RabbitMQ/latest/download)
 [![Discord](https://img.shields.io/discord/715744504891703319)](https://discord.gg/6HxgFCx)
 
-Pluggable foundation blocks for building loosely coupled distributed apps.
+# Foundatio.RabbitMQ
+
+RabbitMQ pub/sub messaging for Foundatio's `IMessageBus` abstraction. This repository contains the provider implementation, XML API comments, samples, and tests. **Provider documentation is maintained in [FoundatioFx/Foundatio](https://github.com/FoundatioFx/Foundatio/tree/main/docs).**
 
 ## ✨ Why Choose Foundatio?
 
@@ -35,11 +37,21 @@ dotnet add package Foundatio.RabbitMQ
 ```
 
 ```csharp
-// Messaging
-IMessageBus messageBus = new RabbitMQMessageBus(o => o
-    .ConnectionString("amqp://localhost"));
+using Foundatio.Messaging;
+
+await using var messageBus = new RabbitMQMessageBus(o => o
+    .ConnectionString("amqp://localhost")
+    .Topic("events"));
+
+await messageBus.SubscribeAsync<MyMessage>(message =>
+{
+    Console.WriteLine(message.Data);
+});
+
 await messageBus.PublishAsync(new MyMessage { Data = "Hello" });
 ```
+
+`MyMessage` is your application message type. This local plaintext example uses best-effort defaults, not a required-delivery profile. Keep the bus alive for the subscription's intended lifetime; publication completion does not mean a handler has completed. Use `amqps` for encrypted transport.
 
 ## 📦 Provider Implementations
 
@@ -58,72 +70,83 @@ await messageBus.PublishAsync(new MyMessage { Data = "Hello" });
 
 ## 📚 Learn More
 
-**👉 [Complete Documentation](https://foundatio.dev)**
+- [Published RabbitMQ overview](https://foundatio.dev/guide/implementations/rabbitmq)
+- [Companion documentation PR #574](https://github.com/FoundatioFx/Foundatio/pull/574) for the implementation in [provider PR #100](https://github.com/FoundatioFx/Foundatio.RabbitMQ/pull/100)
+- [Branch guide: configuration and TLS](https://github.com/FoundatioFx/Foundatio/blob/docs/rabbitmq-4.2.5-delivery-contracts/docs/guide/implementations/rabbitmq.md)
+- [Branch guide: delivery safety and adoption](https://github.com/FoundatioFx/Foundatio/blob/docs/rabbitmq-4.2.5-delivery-contracts/docs/guide/implementations/rabbitmq-delivery-safety.md)
+- [Branch guide: testing and verification](https://github.com/FoundatioFx/Foundatio/blob/docs/rabbitmq-4.2.5-delivery-contracts/docs/guide/implementations/rabbitmq-verification.md)
 
-### Delayed Message Delivery
+The branch guides describe the companion implementation, including changed exhaustion behavior and opt-in strict delivery contracts. They are not a claim that those APIs are already released. Review the two PRs together and coordinate documentation publication with the provider release. Keep these branch links available until the corresponding published guides exist.
 
-Foundatio.RabbitMQ supports delayed message delivery via the `DeliveryDelay` option on `PublishAsync`.
+**Breaking behavior:** exhausted `Automatic` deliveries now remain unacknowledged when no terminal destination is configured, instead of being silently discarded. This can block consumption and grow the broker backlog. Configure quarantine and capacity policies, or explicitly choose `DiscardOnDeliveryLimit` for discardable messages. `FireAndForget` remains the default; `RequireSuccessfulDispatch` requires Automatic, a configured `DeadLetterExchange`, and no discard.
 
-**Current behavior:**
+Classic and quorum queues both support provider-confirmed retries/terminal handling. Replication and broker-managed at-least-once dead-lettering are quorum capabilities; changing a builder option cannot convert an existing classic queue.
 
-1. **RabbitMQ < 4.3 with plugin installed**: If the [`rabbitmq_delayed_message_exchange`](https://github.com/rabbitmq/rabbitmq-delayed-message-exchange/) plugin is detected, it is used for delayed delivery. A warning is logged because the plugin is deprecated and will not work on RabbitMQ 4.3+.
-2. **RabbitMQ < 4.3 without plugin**: Falls back to an in-memory delay scheduler provided by `MessageBusBase`. Messages are held in process memory and delivered after the delay. **This is not durable** -- delayed messages are lost if the process restarts.
-3. **When the RabbitMQ server version is detected as >= 4.3**: The plugin probe is skipped (the plugin depends on Mnesia, which was removed in 4.3), and the in-memory fallback is used automatically. If the server version cannot be determined from `ServerProperties["version"]`, the probe may still be attempted before falling back.
+### Delayed message delivery
 
-**Migration guidance:**
+`PublishAsync` supports `MessageOptions.DeliveryDelay`. On RabbitMQ before 4.3, the archived [`rabbitmq_delayed_message_exchange` plugin](https://github.com/rabbitmq/rabbitmq-delayed-message-exchange/) provides broker-side scheduling when installed. Without that plugin, the default is an in-process scheduler: pending messages are lost if the publisher stops. RabbitMQ 4.3 removed the Mnesia store required by the plugin, so the provider skips its probe and uses the in-process fallback. If the server version cannot be read, it attempts the probe before falling back.
 
-The `rabbitmq_delayed_message_exchange` plugin is [archived and no longer maintained](https://github.com/rabbitmq/rabbitmq-delayed-message-exchange/). RabbitMQ 4.3 removes Mnesia, making the plugin incompatible. If you rely on delayed messages:
+Set `RequireBrokerDelayedDelivery` with durable messages and publisher confirms to reject a delayed publication when broker-side scheduling is unavailable. This option does not make the plugin replicated. Native quorum delayed retries on RabbitMQ 4.3+ apply to returned deliveries; they do not schedule the initial publication. For durable initial scheduling without the plugin, use an application outbox or a separately verified scheduler.
 
-- On RabbitMQ < 4.3: The plugin still works but logs a deprecation warning at startup.
-- On RabbitMQ >= 4.3: Delayed messages use the in-memory fallback automatically. Be aware that these are not durable across process restarts.
-- For durable delayed delivery on RabbitMQ 4.3+, consider implementing TTL + Dead-Letter Exchange patterns or using an external scheduler.
+### RabbitMQ version and queue features
 
-### RabbitMQ 4.3 Feature Support
+The library supports classic and quorum queues on the pinned 4.2.5 test baseline and retains guards for RabbitMQ 4.3+ features:
 
-**Supported (AMQP 0.9.1 compatible):**
+| Feature | RabbitMQ 4.2.x | RabbitMQ 4.3+ |
+|---------|----------------|---------------|
+| Classic priorities | `UseMessagePriority()` sets `x-max-priority` | Same |
+| Quorum priorities | Normal/high tiers | 32 strict levels, built in |
+| Quorum delayed retries | Unavailable | `UseDelayedRetries()` with linear backoff on returned deliveries |
+| Quorum consumer timeout | Unavailable | `ConsumerTimeout()` |
+| Single active consumer | Supported | Supported |
 
-- 32 strict message priority levels on quorum queues automatically; `UseMessagePriority()` configures classic queues only
-- Delayed retries with linear backoff (via `UseDelayedRetries()`)
-- Per-queue consumer timeouts (via `ConsumerTimeout()`)
-- Single active consumer (via `UseSingleActiveConsumer()`)
+`UseMessagePriority()` configures classic queues only and fails when combined with `UseQuorumQueues()`. Quorum priorities are built in; publishers can still set the message `Priority` in either mode.
 
-**Not supported (require AMQP 1.0 protocol):**
-
-- `x-opt-delivery-time` annotation -- per-message delayed retry override via the `modified` disposition outcome. AMQP 0.9.1 `basic.nack`/`basic.reject` do not support annotations.
-- `x-opt-delivery-delay` annotation -- relative delay for the enterprise Message Scheduler / Delayed Queue plugin.
-- Rejected-by and rejection reason -- returned to publishers in the AMQP 1.0 `Rejected` outcome.
-- Consumer activity notification -- signaled via AMQP 1.0 flow frames for single active consumer state transitions.
-
-This library uses the `RabbitMQ.Client` package (AMQP 0.9.1). To use AMQP 1.0 features, consider the [Amqp.Net Lite](https://github.com/Azure/amqpnetlite) library or the [RabbitMQ AMQP 1.0 .NET client](https://github.com/rabbitmq/rabbitmq-amqp-dotnet-client).
+These features use the AMQP 0.9.1 client. AMQP 1.0 delivery annotations, rejected-by details, and consumer activity notifications are outside this provider's protocol. See the [RabbitMQ priority guide](https://www.rabbitmq.com/docs/priority) for the differences between classic and quorum queues.
 
 ### OpenTelemetry
 
-Foundatio automatically propagates W3C trace context (`traceparent` / `tracestate`) through message headers. On publish, the current `Activity.Id` is stored as the message's `CorrelationId`; on receive, Foundatio starts a new `Activity` parented to that ID, linking consumer spans back to the publisher's trace.
-
-To collect Foundatio's application-level message spans, add the `"Foundatio"` source:
-
-```csharp
-.AddSource("Foundatio")
-```
-
-For additional **transport-level** visibility (AMQP channel operations, network round-trips), the `RabbitMQ.Client` 7.x library emits its own spans:
-
-```csharp
-.AddSource("RabbitMQ.Client.*")
-```
-
-A complete tracing setup:
+Foundatio copies the current activity ID to the AMQP `CorrelationId` property unless the caller supplies one, carries `TraceState` in a header, and uses the received correlation ID as the parent of its handler activity. To collect handler spans, add the `Foundatio` activity source; RabbitMQ.Client 7.x also emits optional transport spans:
 
 ```csharp
 services.AddOpenTelemetry().WithTracing(tracing =>
 {
-    tracing.AddSource("Foundatio");          // message publish/handle spans
+    tracing.AddSource("Foundatio");          // message handler spans
     tracing.AddSource("RabbitMQ.Client.*");  // AMQP transport spans (optional)
     tracing.AddOtlpExporter();
 });
 ```
 
-> **Note:** The [`RabbitMQ.Client.OpenTelemetry`](https://www.nuget.org/packages/RabbitMQ.Client.OpenTelemetry/) package (currently pre-release) is NOT required -- Foundatio handles cross-process trace propagation at the application level. That package adds an alternative propagation mechanism at the transport level which is redundant when using Foundatio.
+The transport instrumentation package is not required for Foundatio's application-level trace propagation.
+
+## Development
+
+All repository-managed broker configurations stay on **RabbitMQ 4.2.5**. The delayed-exchange plugin artifact is independently versioned `4.2.0`; no 4.3 broker upgrade is included. This compatibility pin is not a broker security/support-lifecycle certification.
+
+From this repository root, with Docker and the required .NET SDK installed:
+
+```bash
+docker build -t foundatiorabbitmq-rabbitmq-delayed:latest build
+dotnet build Foundatio.RabbitMQ.slnx --configuration Release
+FOUNDATIO_RABBITMQ_REQUIRE_INFRASTRUCTURE=true \
+  dotnet test --solution Foundatio.RabbitMQ.slnx --configuration Release --no-build
+```
+
+The existing shared **Build** runs the complete suite, including TLS, with the shared Aspire collection. Keep provider contract tests on the existing Foundatio bases and focused tests on `TestWithLoggingBase`. No separate endpoint, integration, TLS, or package-verification workflow is needed. See the linked verification guide for fixture ownership, test-only fault injection, and evidence boundaries.
+
+### Aspire sample
+
+After the image and solution build above:
+
+```bash
+dotnet run --project tests/Foundatio.RabbitMQ.AppHost --configuration Release --no-build --launch-profile http
+```
+
+The loopback HTTP profile starts a publisher and separate classic/quorum subscribers. Every fifth order deliberately fails and reaches its queue type's quarantine; successful orders drain normally. Sample source and quarantine queues have 16 MiB ready-message limits with reject-publish overflow. These limits do not cap total broker storage or unacknowledged work. Failed sample publications are logged, not replayed by an outbox.
+
+Dashboard commands target this run's exact broker containers. Alarm commands capture the effective byte threshold and restore it when cleared; each Docker invocation has a 30-second deadline. Restore alarms before ending a scenario. For topology names, backlog/recovery scenarios, and focused test commands, see the [verification guide](https://github.com/FoundatioFx/Foundatio/blob/docs/rabbitmq-4.2.5-delivery-contracts/docs/guide/implementations/rabbitmq-verification.md).
+
+The full TLS suite temporarily adds its test CA to the current-user root store and removes it during cleanup. Linux CI exercises this path. macOS may deny write access to that store; a required-infrastructure startup failure is not a passing or skipped TLS verification.
 
 ### Core Features
 
@@ -143,8 +166,6 @@ services.AddOpenTelemetry().WithTracing(tracing =>
 - [Configuration](https://foundatio.dev/guide/configuration) - Options and settings
 
 ## 📦 CI Packages (Feedz)
-
-Want the latest CI build before it hits NuGet? Add the Feedz source and install the pre-release version:
 
 ```bash
 dotnet nuget add source https://f.feedz.io/foundatio/foundatio/nuget -n foundatio-feedz
@@ -168,18 +189,11 @@ Or add to your `NuGet.config`:
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request. See our [documentation](https://foundatio.dev) for development guidelines.
-
-**Development Setup:**
-
-1. Clone the repository
-2. Open `Foundatio.RabbitMQ.slnx` in Visual Studio or VS Code
-3. Run `dotnet build` to build
-4. Run `dotnet test` to run tests
+Contributions are welcome! See [AGENTS.md](AGENTS.md) for repository conventions and [issue #99](https://github.com/FoundatioFx/Foundatio.RabbitMQ/issues/99) for delivery/recovery tracking. Detailed provider documentation changes belong on a linked branch in FoundatioFx/Foundatio rather than a duplicate guide tree here.
 
 ## 📄 License
 
-Apache 2.0 License
+Apache 2.0 License. See [LICENSE.txt](LICENSE.txt).
 
 ## Thanks to all the people who have contributed
 
