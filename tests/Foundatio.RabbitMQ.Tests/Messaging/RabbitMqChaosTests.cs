@@ -11,8 +11,9 @@ using Xunit;
 
 namespace Foundatio.RabbitMQ.Tests.Messaging;
 
+[Collection(nameof(RabbitMqTestCollection))]
 public class RabbitMqChaosTests(AspireFixture fixture, ITestOutputHelper output)
-    : TestWithLoggingBase(output), IClassFixture<AspireFixture>
+    : TestWithLoggingBase(output)
 {
     private ChaosTestHelper? _chaos;
     private ChaosTestHelper Chaos => _chaos ??= new(fixture.App, Log);
