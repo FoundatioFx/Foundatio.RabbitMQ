@@ -1,20 +1,23 @@
 using System;
 using System.Collections.Generic;
+using Foundatio.Utility;
 
 namespace Foundatio.Messaging;
 
 public class RabbitMQMessageBusOptions : SharedMessageBusOptions
 {
     /// <summary>
-    /// The connection string. See https://www.rabbitmq.com/uri-spec.html for more information.
-    /// Provides credentials and vhost. When Hosts is specified, the host in the connection string is ignored.
+    /// The connection URI. Provides credentials and vhost. A nonempty Hosts list replaces the URI host.
+    /// The amqps scheme enables TLS for every endpoint; each certificate identity must match its endpoint.
     /// </summary>
     public string? ConnectionString { get; set; }
 
     /// <summary>
-    /// List of hosts for failover. When specified, the client will try each host in order until one succeeds.
-    /// Format: "hostname" or "hostname:port" (default port is 5672, or 5671 for amqps).
-    /// If not specified, the host from ConnectionString is used.
+    /// Replacement endpoints for connection establishment and network recovery, in hostname,
+    /// hostname:port, bare IPv6, or [IPv6]:port form. Selection is randomized, not ordered.
+    /// An omitted host-list port uses 5672 for amqp or 5671 for amqps, not a custom URI port.
+    /// Explicit ports must be 1-65535. A null or empty list uses the URI endpoint.
+    /// A nonempty list containing no usable endpoint is rejected.
     /// </summary>
     public IList<string>? Hosts { get; set; }
 
@@ -50,36 +53,34 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     public string SubscriptionQueueName { get; set; } = String.Empty;
 
     /// <summary>
-    /// How messages should be acknowledged.
+    /// The default is FireAndForget (broker automatic acknowledgement), not acknowledgement
+    /// after successful application processing. Automatic acknowledges after dispatch succeeds.
     /// </summary>
     public AcknowledgementStrategy AcknowledgementStrategy { get; set; } = AcknowledgementStrategy.FireAndForget;
 
     /// <summary>
-    /// Consumer prefetch count. Limits the number of unacknowledged messages a consumer can have.
-    /// Set to 0 (default) which will prefetch all available messages (unbounded).
-    /// Recommended values: 5-50 for most scenarios, higher for fast processing, lower for slow/heavy processing or large message sizes.
+    /// Limits unacknowledged deliveries per consumer, not handler concurrency.
+    /// Does not bound FireAndForget consumers. When both prefetch settings are zero,
+    /// no BasicQos is sent and a broker-configured default can still apply.
     /// </summary>
     public ushort PrefetchCount { get; set; }
 
-    /// <summary>
-    /// Consumer prefetch size in bytes. Limits the total size of unacknowledged messages a consumer can have.
-    /// Set to 0 (default) for no size limit. This provides additional flow control beyond message count.
-    /// </summary>
+    /// <summary>Prefetch size in bytes. Zero is the supported RabbitMQ default; not an application memory limit.</summary>
     public uint PrefetchSize { get; set; }
 
     /// <summary>
-    /// Whether QoS settings apply globally to the connection or just to the channel.
-    /// When true, the QoS settings apply to all consumers on the connection.
-    /// When false (default), the QoS settings apply only to consumers on this channel.
+    /// Whether prefetch is shared by consumers on a channel, not across the connection.
+    /// Unsupported for quorum queues. The provider falls back to per-consumer QoS where necessary.
     /// </summary>
-    [Obsolete("Global QoS is deprecated in RabbitMQ 4.3+ and will be removed in a future version. Use per-channel prefetch (GlobalQos = false) instead.")]
+    [Obsolete("Global QoS is deprecated in RabbitMQ 4.3+ and will be removed in a future version. Use per-consumer prefetch (GlobalQos = false) instead.")]
     public bool GlobalQos { get; set; }
 
     /// <summary>
-    /// Sets the maximum number of times a message can be delivered (retried) before it is discarded. If using
-    /// classic queues, we will republish the message with an x-delivery-count header and acknowledge the previous message.
-    ///
-    /// Setting this to -1 means there is no limit on the number of deliveries.
+    /// Maximum failed redeliveries after the initial attempt; -1 means unlimited.
+    /// Classic retries use a confirmed, subscription-local handoff. On exhaustion, a configured
+    /// dead-letter exchange receives a confirmed handoff; without one, the original is retained
+    /// unless DiscardOnDeliveryLimit is explicitly enabled. Broker limits and policies are separate:
+    /// a finite quorum broker delivery limit can also act on connection-loss redeliveries.
     /// </summary>
     public long DeliveryLimit { get; set; } = 2;
 
@@ -89,8 +90,44 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     /// Performance impact varies by workload - use async/pipelining patterns for best results.
     /// Default: false (fire-and-forget publishing for backward compatibility).
     /// See: https://www.rabbitmq.com/docs/confirms#publisher-confirms
+    /// A confirmation does not guarantee consumer processing or routing to every subscription.
     /// </summary>
     public bool PublisherConfirmsEnabled { get; set; }
+
+    /// <summary>
+    /// Require at least one route for an ordinary immediate publication. Enables confirms and
+    /// AMQP mandatory returns. Does not verify all expected fanout subscriptions or consumer processing.
+    /// Scheduled publication through the delayed-exchange plugin cannot satisfy this contract.
+    /// </summary>
+    public bool RequirePublishRouting { get; set; }
+
+    /// <summary>
+    /// Require actual completion of matching live handlers before acknowledgement. Requires Automatic,
+    /// a configured DeadLetterExchange, and DiscardOnDeliveryLimit=false. Provision the destination separately.
+    /// Unmatched types and malformed typed payloads become terminal failures instead of intentional
+    /// pub/sub filtering. False preserves the existing best-effort filtering/dispatch contract.
+    /// </summary>
+    public bool RequireSuccessfulDispatch { get; set; }
+
+    /// <summary>
+    /// Reject delayed publication when broker-side delayed delivery is unavailable; never silently
+    /// schedule that work in process memory. Requires durable publications and publisher confirms.
+    /// This is not a guarantee of replicated scheduling or eventual destination availability.
+    /// </summary>
+    public bool RequireBrokerDelayedDelivery { get; set; }
+
+    /// <summary>
+    /// Explicitly opt into the legacy discard-on-exhaustion behavior when no dead-letter exchange
+    /// is configured. Default: false. Discard is logged and must not be used for required work.
+    /// </summary>
+    public bool DiscardOnDeliveryLimit { get; set; }
+
+    /// <summary>
+    /// Maximum individual transport cleanup wait, including lock acquisition. Cleanup can continue after
+    /// the wait expires; this is not a total application shutdown deadline. Handlers receive cancellation; handlers that
+    /// ignore cancellation may continue running and must tolerate redelivery. Default: ten seconds.
+    /// </summary>
+    public TimeSpan ShutdownTimeout { get; set; } = TimeSpan.FromSeconds(10);
 
     /// <summary>
     /// Maximum time each publish attempt will wait for connection recovery before failing.
@@ -106,7 +143,7 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     /// <summary>
     /// Heartbeat timeout negotiated with the broker. Controls how quickly dead TCP connections are detected.
     /// Lower values detect failures faster but may cause false positives on congested networks.
-    /// Set to TimeSpan.Zero to disable heartbeats (not recommended for production).
+    /// TimeSpan.Zero disables heartbeats only when the broker also offers zero.
     /// Default: null (uses client library default of 60 seconds).
     /// See: https://www.rabbitmq.com/docs/heartbeats
     /// </summary>
@@ -121,10 +158,9 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     public TimeSpan? NetworkRecoveryInterval { get; set; }
 
     /// <summary>
-    /// Dead letter exchange name. Messages that exceed the delivery limit or are rejected
-    /// will be routed to this exchange instead of being dropped.
-    /// Set via the x-dead-letter-exchange queue argument.
-    /// See: https://www.rabbitmq.com/docs/dlx
+    /// Exchange used for terminal handoffs and the broker x-dead-letter-exchange argument.
+    /// Provision its durable destination separately. Client terminal handoffs are confirmed and
+    /// mandatory; broker-triggered expiry or delivery limits have their own dead-letter safety policy.
     /// </summary>
     public string? DeadLetterExchange { get; set; }
 
@@ -136,11 +172,9 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     public string? DeadLetterRoutingKey { get; set; }
 
     /// <summary>
-    /// Dead-letter strategy for quorum queues. Controls whether messages are transferred
-    /// to the DLX with at-most-once (default, may lose messages) or at-least-once (guaranteed delivery)
-    /// semantics. At-least-once requires Overflow to be set to RejectPublish.
-    /// Set via the x-dead-letter-strategy queue argument.
-    /// See: https://www.rabbitmq.com/docs/quorum-queues#dead-lettering
+    /// Broker dead-letter strategy for quorum queues. AtLeastOnce requires RejectPublish overflow,
+    /// a configured DLX, and the broker prerequisites. It retains transfers until confirmed;
+    /// duplicate transfers remain possible. AtMostOnce can lose messages in transit.
     /// </summary>
     public DeadLetterStrategy? DeadLetterStrategy { get; set; }
 
@@ -163,21 +197,16 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     public TimeSpan? ConsumerTimeout { get; set; }
 
     /// <summary>
-    /// When true, only one consumer at a time will receive messages from the queue.
-    /// Other consumers act as standby and automatically take over if the active consumer disconnects.
-    /// Useful for strict message ordering with automatic failover.
-    /// Set via the x-single-active-consumer queue argument.
-    /// See: https://www.rabbitmq.com/docs/consumers#single-active-consumer
+    /// Enable one active consumer with standby consumers. Does not eliminate duplicates,
+    /// guarantee business execution order, or override message priorities.
     /// </summary>
     public bool SingleActiveConsumer { get; set; }
 
     /// <summary>
-    /// Maximum number of priority levels for classic queues (1-255). Higher limits cost
+    /// Classic queue maximum priority (1-255), sent as x-max-priority. Higher limits cost
     /// more broker CPU and memory; UseMessagePriority() limits its convenience API to 32.
-    /// Messages published with a higher priority value are delivered to consumers before lower-priority messages.
-    /// Set via the x-max-priority queue argument for classic queues only.
-    /// RabbitMQ 4.2 quorum queues use normal/high tiers; RabbitMQ 4.3+ quorum queues support
-    /// 32 strict priority levels automatically and cannot use this setting.
+    /// Quorum queues cannot use this setting: RabbitMQ 4.2 uses normal/high tiers, and 4.3+
+    /// has 32 strict levels automatically. RabbitMQ.Client 7.2.2 omits a message priority of zero.
     /// See: https://www.rabbitmq.com/docs/priority
     /// </summary>
     public byte? MaxPriority
@@ -199,7 +228,7 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     /// </summary>
     internal static bool IsQuorumQueue(IDictionary<string, object?>? arguments)
     {
-        return arguments is not null && arguments.TryGetValue("x-queue-type", out object? queueType)
+        return arguments is not null && arguments.TryGetValue(RabbitMQConstants.QueueTypeArgument, out object? queueType)
             && queueType is string type && String.Equals(type, "quorum", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -228,6 +257,29 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     /// Set via x-delayed-retry-max queue argument.
     /// </summary>
     public int? DelayedRetryMax { get; set; }
+
+    internal static void Validate(RabbitMQMessageBusOptions options)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(options.DeliveryLimit, -1L);
+        ArgumentOutOfRangeException.ThrowIfLessThan(options.PublishRecoveryTimeout, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(options.ShutdownTimeout, TimeSpan.Zero);
+        if (options.RequestedHeartbeat.HasValue)
+            ArgumentOutOfRangeException.ThrowIfLessThan(options.RequestedHeartbeat.Value, TimeSpan.Zero);
+        if (options.NetworkRecoveryInterval.HasValue)
+            ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(options.NetworkRecoveryInterval.Value, TimeSpan.Zero);
+        if (options.MaxPriority.HasValue && IsQuorumQueue(options.Arguments))
+            throw new InvalidOperationException("MaxPriority applies only to classic queues and cannot be used with quorum queues.");
+        if (options.RequireSuccessfulDispatch && options.AcknowledgementStrategy != AcknowledgementStrategy.Automatic)
+            throw new ArgumentException("RequireSuccessfulDispatch requires Automatic acknowledgements.", nameof(options));
+        if (options.RequireSuccessfulDispatch && options.DiscardOnDeliveryLimit)
+            throw new ArgumentException("Required dispatch cannot enable discard on delivery exhaustion.", nameof(options));
+        if (options.RequireSuccessfulDispatch && String.IsNullOrWhiteSpace(options.DeadLetterExchange))
+            throw new ArgumentException("RequireSuccessfulDispatch requires a configured DeadLetterExchange for terminal deliveries.", nameof(options));
+        if (options.RequireBrokerDelayedDelivery && (!options.IsDurable || (!options.PublisherConfirmsEnabled && !options.RequirePublishRouting)))
+            throw new ArgumentException("Required broker-side delay needs durable publications and publisher confirms.", nameof(options));
+        if (!String.IsNullOrWhiteSpace(options.DeadLetterExchange) && String.Equals(options.DeadLetterExchange, options.Topic, StringComparison.Ordinal))
+            throw new ArgumentException("The terminal exchange must differ from the source fanout exchange.", nameof(options));
+    }
 }
 
 public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<RabbitMQMessageBusOptions, RabbitMQMessageBusOptionsBuilder>
@@ -238,20 +290,14 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
         return this;
     }
 
-    /// <summary>
-    /// Sets the list of hosts for failover support. Replaces the host from ConnectionString.
-    /// </summary>
-    /// <param name="hosts">Hostnames in format "hostname" or "hostname:port"</param>
+    /// <summary>Replace the URI host with randomly selected hostnames or IPs, optionally including ports.</summary>
     public RabbitMQMessageBusOptionsBuilder Hosts(params string[] hosts)
     {
         Target.Hosts = hosts ?? throw new ArgumentNullException(nameof(hosts));
         return this;
     }
 
-    /// <summary>
-    /// Sets the list of hosts for failover support. Replaces the host from ConnectionString.
-    /// </summary>
-    /// <param name="hosts">Hostnames in format "hostname" or "hostname:port"</param>
+    /// <summary>Replace the URI host. An empty list uses the URI endpoint.</summary>
     public RabbitMQMessageBusOptionsBuilder Hosts(IList<string> hosts)
     {
         Target.Hosts = hosts ?? throw new ArgumentNullException(nameof(hosts));
@@ -312,7 +358,7 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
         return this;
     }
 
-    [Obsolete("Global QoS is deprecated in RabbitMQ 4.3+ and will be removed in a future version. Use per-channel prefetch (GlobalQos = false) instead.")]
+    [Obsolete("Global QoS is deprecated in RabbitMQ 4.3+ and will be removed in a future version. Use per-consumer prefetch (GlobalQos = false) instead.")]
     public RabbitMQMessageBusOptionsBuilder GlobalQos(bool globalQos)
     {
 #pragma warning disable CS0618
@@ -326,21 +372,51 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
         Target.DeliveryLimit = deliveryLimit;
 
         Target.Arguments ??= new Dictionary<string, object?>();
-        Target.Arguments["x-delivery-limit"] = deliveryLimit;
+        Target.Arguments[RabbitMQConstants.DeliveryLimitArgument] = deliveryLimit;
 
         return this;
     }
 
-    /// <summary>
-    /// Enables publisher confirms, which guarantees the message reached the broker.
-    /// When enabled, PublishAsync waits for broker confirmation before returning.
-    /// See: https://www.rabbitmq.com/docs/confirms#publisher-confirms
-    /// </summary>
-    /// <param name="enabled">Whether to enable publisher confirms. Default: true.</param>
-    /// <returns>The builder instance for method chaining.</returns>
+    /// <summary>Enable broker confirmation, not consumer-processing confirmation.</summary>
     public RabbitMQMessageBusOptionsBuilder PublisherConfirmsEnabled(bool enabled = true)
     {
         Target.PublisherConfirmsEnabled = enabled;
+        return this;
+    }
+
+    /// <summary>Require a confirmed, routed immediate publication; scheduled routing is not covered.</summary>
+    public RabbitMQMessageBusOptionsBuilder RequirePublishRouting(bool required = true)
+    {
+        Target.RequirePublishRouting = required;
+        return this;
+    }
+
+    /// <summary>Require matching live handlers to complete successfully before acknowledgement.</summary>
+    public RabbitMQMessageBusOptionsBuilder RequireSuccessfulDispatch(bool required = true)
+    {
+        Target.RequireSuccessfulDispatch = required;
+        return this;
+    }
+
+    /// <summary>Reject delayed publications instead of using an in-memory fallback.</summary>
+    public RabbitMQMessageBusOptionsBuilder RequireBrokerDelayedDelivery(bool required = true)
+    {
+        Target.RequireBrokerDelayedDelivery = required;
+        return this;
+    }
+
+    /// <summary>Explicitly allow discarding exhausted deliveries without a configured DLX.</summary>
+    public RabbitMQMessageBusOptionsBuilder DiscardOnDeliveryLimit(bool discard = true)
+    {
+        Target.DiscardOnDeliveryLimit = discard;
+        return this;
+    }
+
+    /// <summary>Set the positive, bounded transport shutdown timeout.</summary>
+    public RabbitMQMessageBusOptionsBuilder ShutdownTimeout(TimeSpan timeout)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeout, TimeSpan.Zero);
+        Target.ShutdownTimeout = timeout;
         return this;
     }
 
@@ -359,12 +435,10 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
     }
 
     /// <summary>
-    /// Configures the message bus for RabbitMQ quorum queues using recommended settings.
-    /// Disables auto-delete and exclusive mode for subscription queues,
-    /// and sets quorum-specific arguments based on the current DeliveryLimit value.
-    /// Preserves any existing arguments.
+    /// Select quorum queues and retain them across disconnects. Preserves other raw arguments.
+    /// The broker delivery limit is set to the current DeliveryLimit; an explicit raw override
+    /// can instead disable that broker limit (-1) while retaining the application retry budget.
     /// </summary>
-    /// <returns>The builder instance for method chaining.</returns>
     public RabbitMQMessageBusOptionsBuilder UseQuorumQueues()
     {
         if (Target.MaxPriority.HasValue)
@@ -374,11 +448,8 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
         Target.IsSubscriptionQueueExclusive = false;
 
         Target.Arguments ??= new Dictionary<string, object?>();
-
-        // Add or update quorum-specific arguments
-        Target.Arguments["x-queue-type"] = "quorum";
-        Target.Arguments["x-delivery-limit"] = Target.DeliveryLimit;
-
+        Target.Arguments[RabbitMQConstants.QueueTypeArgument] = "quorum";
+        Target.Arguments[RabbitMQConstants.DeliveryLimitArgument] = Target.DeliveryLimit;
         return this;
     }
 
@@ -386,7 +457,7 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
     /// Sets the heartbeat timeout negotiated with the broker.
     /// Controls how quickly dead TCP connections are detected.
     /// </summary>
-    /// <param name="heartbeat">Heartbeat interval. TimeSpan.Zero disables heartbeats.</param>
+    /// <param name="heartbeat">Requested heartbeat timeout. Heartbeats are disabled only when both peers offer zero.</param>
     public RabbitMQMessageBusOptionsBuilder RequestedHeartbeat(TimeSpan heartbeat)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(heartbeat, TimeSpan.Zero);
@@ -405,12 +476,7 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
         return this;
     }
 
-    /// <summary>
-    /// Configures a dead letter exchange for messages that exceed the delivery limit or are rejected.
-    /// </summary>
-    /// <param name="exchange">The DLX exchange name.</param>
-    /// <param name="routingKey">Optional routing key for dead-lettered messages.</param>
-    /// <param name="strategy">Dead-letter strategy. AtLeastOnce requires overflow to be RejectPublish.</param>
+    /// <summary>Configure terminal routing. Provision the durable destination separately.</summary>
     public RabbitMQMessageBusOptionsBuilder DeadLetterExchange(string exchange, string? routingKey = null, DeadLetterStrategy? strategy = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(exchange);
@@ -444,11 +510,7 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
         return this;
     }
 
-    /// <summary>
-    /// Enables single active consumer mode for strict message ordering with automatic failover.
-    /// Only one consumer at a time will receive messages; others act as standby.
-    /// </summary>
-    /// <param name="enabled">Whether to enable single active consumer. Default: true.</param>
+    /// <summary>Enable a single active consumer; does not eliminate redelivery or enforce business ordering.</summary>
     public RabbitMQMessageBusOptionsBuilder UseSingleActiveConsumer(bool enabled = true)
     {
         Target.SingleActiveConsumer = enabled;
@@ -475,7 +537,7 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
     /// <summary>
     /// Configures native delayed retry for quorum queues (RabbitMQ 4.3+).
     /// Rejected/failed messages are held in a delayed state with linear backoff before redelivery.
-    /// This replaces the need for the delayed message exchange plugin for retry scenarios.
+    /// This applies to rejected messages; it does not schedule initial publications.
     /// </summary>
     /// <param name="minDelayMs">Minimum delay in milliseconds (multiplied by delivery count).</param>
     /// <param name="maxDelayMs">Maximum delay cap in milliseconds.</param>
@@ -486,7 +548,7 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxDelayMs, 0);
 
         if (maxDelayMs < minDelayMs)
-            throw new ArgumentOutOfRangeException(nameof(maxDelayMs), $"maxDelayMs ({maxDelayMs}) must be >= minDelayMs ({minDelayMs})");
+            throw new ArgumentOutOfRangeException(nameof(maxDelayMs), FormattableString.Invariant($"maxDelayMs ({maxDelayMs}) must be >= minDelayMs ({minDelayMs})"));
 
         Target.DelayedRetryType = retryType;
         Target.DelayedRetryMin = minDelayMs;
