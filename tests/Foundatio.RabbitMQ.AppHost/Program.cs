@@ -45,11 +45,11 @@ var chaos1Amqp = chaosNodes[0].GetEndpoint("amqp");
 var chaos2Amqp = chaosNodes[1].GetEndpoint("amqp");
 var chaos3Amqp = chaosNodes[2].GetEndpoint("amqp");
 
-builder.AddProject<Foundatio_RabbitMQ_Publish>("publisher")
+var publisher = builder.AddProject<Foundatio_RabbitMQ_Publish>("publisher")
     .WaitFor(chaosNodes[0])
     .WaitFor(chaosNodes[1])
     .WaitFor(chaosNodes[2])
-    .WithArgs("--interval", "2000", "--publisher-confirms", "--durable")
+    .WithArgs("--interval", "2000", "--publisher-confirms", "--durable", "--require-routing")
     .WithEnvironment(context =>
     {
         context.EnvironmentVariables["ConnectionStrings__messaging"] =
@@ -58,18 +58,25 @@ builder.AddProject<Foundatio_RabbitMQ_Publish>("publisher")
             ReferenceExpression.Create($"{chaos1Amqp.Property(EndpointProperty.Host)}:{chaos1Amqp.Property(EndpointProperty.Port)},{chaos2Amqp.Property(EndpointProperty.Host)}:{chaos2Amqp.Property(EndpointProperty.Port)},{chaos3Amqp.Property(EndpointProperty.Host)}:{chaos3Amqp.Property(EndpointProperty.Port)}");
     });
 
-builder.AddProject<Foundatio_RabbitMQ_Subscribe>("subscriber")
-    .WaitFor(chaosNodes[0])
-    .WaitFor(chaosNodes[1])
-    .WaitFor(chaosNodes[2])
-    .WithArgs("--durable")
-    .WithEnvironment(context =>
-    {
-        context.EnvironmentVariables["ConnectionStrings__messaging"] =
-            ReferenceExpression.Create($"amqp://guest:guest@{chaos1Amqp.Property(EndpointProperty.Host)}:{chaos1Amqp.Property(EndpointProperty.Port)}");
-        context.EnvironmentVariables["RABBITMQ_HOSTS"] =
-            ReferenceExpression.Create($"{chaos1Amqp.Property(EndpointProperty.Host)}:{chaos1Amqp.Property(EndpointProperty.Port)},{chaos2Amqp.Property(EndpointProperty.Host)}:{chaos2Amqp.Property(EndpointProperty.Port)},{chaos3Amqp.Property(EndpointProperty.Host)}:{chaos3Amqp.Property(EndpointProperty.Port)}");
-    });
+foreach (string queueType in new[] { "classic", "quorum" })
+{
+    var subscriber = builder.AddProject<Foundatio_RabbitMQ_Subscribe>($"subscriber-{queueType}")
+        .WaitFor(chaosNodes[0])
+        .WaitFor(chaosNodes[1])
+        .WaitFor(chaosNodes[2])
+        .WithArgs("--durable", "--queue-type", queueType, "--group-id", $"sample-{queueType}",
+            "--acknowledgment-strategy", "automatic", "--require-successful-dispatch",
+            "--dead-letter-exchange", $"sample-{queueType}-quarantine", "--provision-quarantine", "--fail-every", "5")
+        .WithEnvironment(context =>
+        {
+            context.EnvironmentVariables["ConnectionStrings__messaging"] =
+                ReferenceExpression.Create($"amqp://guest:guest@{chaos1Amqp.Property(EndpointProperty.Host)}:{chaos1Amqp.Property(EndpointProperty.Port)}");
+            context.EnvironmentVariables["RABBITMQ_HOSTS"] =
+                ReferenceExpression.Create($"{chaos1Amqp.Property(EndpointProperty.Host)}:{chaos1Amqp.Property(EndpointProperty.Port)},{chaos2Amqp.Property(EndpointProperty.Host)}:{chaos2Amqp.Property(EndpointProperty.Port)},{chaos3Amqp.Property(EndpointProperty.Host)}:{chaos3Amqp.Property(EndpointProperty.Port)}");
+        });
+
+    publisher.WaitFor(subscriber);
+}
 
 foreach (var node in chaosNodes)
 {
