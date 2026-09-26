@@ -50,7 +50,9 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
             !primaryUri.Scheme.Equals("amqps", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException($"ConnectionString must use amqp:// or amqps:// scheme: {SanitizeUri(primaryUri)}");
 
-        _isQuorumQueue = options.Arguments is not null && options.Arguments.TryGetValue("x-queue-type", out object? queueType) && queueType is string type && String.Equals(type, "quorum", StringComparison.OrdinalIgnoreCase);
+        _isQuorumQueue = RabbitMQMessageBusOptions.IsQuorumQueue(options.Arguments);
+        if (_isQuorumQueue && options.MaxPriority.HasValue)
+            throw new InvalidOperationException("MaxPriority applies only to classic queues and cannot be used with quorum queues.");
 
         // Initialize the connection factory with credentials/vhost from connection string
         // Automatic recovery will allow the connections to be restored in case the server is
