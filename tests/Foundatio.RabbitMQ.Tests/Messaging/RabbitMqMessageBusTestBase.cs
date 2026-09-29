@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Foundatio.AsyncEx;
@@ -296,26 +295,38 @@ public abstract class RabbitMqMessageBusTestBase(string connectionString, ITestO
         // Strict quorum priority ordering requires RabbitMQ 4.3+; 4.2 uses normal/high tiers.
         Assert.SkipWhen(RabbitMQMessageBus.ParseServerVersion(connection.ServerProperties) is not { } version
             || version < new Version(4, 3), "Strict quorum priority ordering requires RabbitMQ 4.3+");
-        await using var channel = await connection.CreateChannelAsync(cancellationToken: TestCancellationToken);
+        await using var publisher = new RabbitMQMessageBus(o => o
+            .ConnectionString(ConnectionString)
+            .Topic(topic)
+            .SubscriptionQueueName(queueName)
+            .AcknowledgementStrategy(AcknowledgementStrategy.Automatic)
+            .UseQuorumQueues()
+            .PrefetchCount(1)
+            .PublisherConfirmsEnabled()
+            .LoggerFactory(Log));
+        var received = new ConcurrentQueue<string>();
+        var countdownEvent = new AsyncCountdownEvent(3);
+        var warmupReceived = new AsyncManualResetEvent();
+        var releaseWarmup = new AsyncManualResetEvent();
+
         try
         {
-            // A bound queue must exist before publishing the backlog, without an active consumer.
-            await channel.ExchangeDeclareAsync(topic, "fanout", durable: true, cancellationToken: TestCancellationToken);
-            await channel.QueueDeclareAsync(queueName, durable: true, exclusive: false, autoDelete: false,
-                arguments: new Dictionary<string, object?> { ["x-queue-type"] = "quorum", ["x-delivery-limit"] = 2L },
-                cancellationToken: TestCancellationToken);
-            await channel.QueueBindAsync(queueName, topic, String.Empty, cancellationToken: TestCancellationToken);
+            await publisher.SubscribeAsync<SimpleMessageA>(async msg =>
+            {
+                if (msg.Data == "warmup")
+                {
+                    warmupReceived.Set();
+                    await releaseWarmup.WaitAsync(TestCancellationToken);
+                    return;
+                }
 
-            await using var publisher = new RabbitMQMessageBus(o => o
-                .ConnectionString(ConnectionString)
-                .Topic(topic)
-                .SubscriptionQueueName(queueName)
-                .AcknowledgementStrategy(AcknowledgementStrategy.Automatic)
-                .UseQuorumQueues()
-                .PrefetchCount(1)
-                .PublisherConfirmsEnabled()
-                .LoggerFactory(Log));
+                received.Enqueue(msg.Data!);
+                countdownEvent.Signal();
+            }, TestCancellationToken);
 
+            // Hold the only prefetched delivery so the priority messages wait in the queue.
+            await publisher.PublishAsync(new SimpleMessageA { Data = "warmup" }, cancellationToken: TestCancellationToken);
+            await warmupReceived.WaitAsync(TestCancellationToken).WaitAsync(TimeSpan.FromSeconds(10), TestCancellationToken);
             await publisher.PublishAsync(new SimpleMessageA { Data = "low" },
                 new MessageOptions { Properties = { ["Priority"] = "1" } }, TestCancellationToken);
             await publisher.PublishAsync(new SimpleMessageA { Data = "high" },
@@ -323,16 +334,8 @@ public abstract class RabbitMqMessageBusTestBase(string connectionString, ITestO
             await publisher.PublishAsync(new SimpleMessageA { Data = "medium" },
                 new MessageOptions { Properties = { ["Priority"] = "5" } }, TestCancellationToken);
 
-            var received = new ConcurrentQueue<string>();
-            var countdownEvent = new AsyncCountdownEvent(3);
-
             // Act
-            await publisher.SubscribeAsync<SimpleMessageA>(msg =>
-            {
-                received.Enqueue(msg.Data!);
-                countdownEvent.Signal();
-            }, TestCancellationToken);
-
+            releaseWarmup.Set();
             await countdownEvent.WaitAsync(TimeSpan.FromSeconds(10));
 
             // Assert
@@ -344,9 +347,8 @@ public abstract class RabbitMqMessageBusTestBase(string connectionString, ITestO
         }
         finally
         {
-            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            await channel.QueueDeleteAsync(queueName, cancellationToken: cleanup.Token);
-            await channel.ExchangeDeleteAsync(topic, cancellationToken: cleanup.Token);
+            releaseWarmup.Set();
+            await CleanupMessageBusAsync(publisher);
         }
     }
 

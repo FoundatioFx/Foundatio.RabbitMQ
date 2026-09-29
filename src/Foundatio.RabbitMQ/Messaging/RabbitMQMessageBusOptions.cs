@@ -24,8 +24,13 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     public TimeSpan? DefaultMessageTimeToLive { get; set; }
 
     /// <summary>
-    /// Arguments passed to QueueDeclare. Configure this mutable dictionary before constructing
-    /// the bus; changing it while the bus is running is unsupported.
+    /// Optional queue declaration arguments for broker features such as message TTL.
+    /// Prefer the fluent builder methods for supported settings, such as UseQuorumQueues()
+    /// and UseMessagePriority(). Use Arguments for settings without a dedicated builder method;
+    /// for example, Arguments(new Dictionary&lt;string, object?&gt; { ["x-message-ttl"] = 60000 }).
+    /// Configure this mutable dictionary before constructing the bus; changing it while running is unsupported.
+    /// See: https://www.rabbitmq.com/docs/queues#optional-arguments
+    /// See: https://www.rabbitmq.com/docs/ttl#per-queue-message-ttl-in-queues
     /// </summary>
     public IDictionary<string, object?>? Arguments { get; set; }
 
@@ -172,13 +177,14 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     public bool SingleActiveConsumer { get; set; }
 
     /// <summary>
-    /// Maximum number of priority levels for classic queues (1-255). Higher limits cost
+    /// Maximum message priority for classic queues (1-255). Higher limits cost
     /// more broker CPU and memory; UseMessagePriority() limits its convenience API to 32.
-    /// Messages published with a higher priority value are delivered to consumers before lower-priority messages.
+    /// Prioritizes queued messages; deliveries already sent to consumers are not reordered.
     /// Set via the x-max-priority queue argument for classic queues only.
     /// RabbitMQ 4.2 quorum queues use normal/high tiers; RabbitMQ 4.3+ quorum queues support
     /// 32 strict priority levels automatically and cannot use this setting.
     /// See: https://www.rabbitmq.com/docs/priority
+    /// See: https://www.rabbitmq.com/docs/4.2/priority#quorum-queues
     /// </summary>
     public byte? MaxPriority
     {
