@@ -2,6 +2,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Foundatio.RabbitMQ\Foundatio.RabbitMQ.csproj" />
     <ProjectReference Include="..\Foundatio.RabbitMQ.AppHost\Foundatio.RabbitMQ.AppHost.csproj" IsAspireProjectResource="false" />
+    <ProjectReference Include="..\Foundatio.RabbitMQ.ProcessProbe\Foundatio.RabbitMQ.ProcessProbe.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Aspire.Hosting.Testing" Version="13.5.3" />
