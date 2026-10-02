@@ -174,7 +174,7 @@ public abstract class RabbitMqPriorityBehaviorTestBase(string connectionString, 
         });
     }
 
-    private async Task<Version> GetBrokerVersionAsync()
+    protected async Task<Version> GetBrokerVersionAsync()
     {
         var factory = new ConnectionFactory { Uri = new Uri(connectionString) };
         await using var connection = await factory.CreateConnectionAsync(TestCancellationToken);

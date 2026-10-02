@@ -18,6 +18,7 @@ public class AspireFixture : IAsyncLifetime
 
     public DistributedApplication App => _app ?? throw new InvalidOperationException("RabbitMQ test infrastructure is not initialized.");
     public string? MessagingConnectionString { get; private set; }
+    public string? MessagingPriority43ConnectionString { get; private set; }
     public string? MessagingDelayedConnectionString { get; private set; }
     public string? TlsConnectionString { get; private set; }
     public string? UntrustedTlsConnectionString { get; private set; }
@@ -45,6 +46,7 @@ public class AspireFixture : IAsyncLifetime
             await _app.StartAsync(startup.Token);
             await Task.WhenAll(
                 _app.ResourceNotifications.WaitForResourceHealthyAsync("messaging", startup.Token),
+                _app.ResourceNotifications.WaitForResourceHealthyAsync("messaging-priority-43", startup.Token),
                 _app.ResourceNotifications.WaitForResourceAsync("messaging-delayed", KnownResourceStates.Running, startup.Token),
                 _app.ResourceNotifications.WaitForResourceHealthyAsync("chaos-1", startup.Token),
                 _app.ResourceNotifications.WaitForResourceHealthyAsync("chaos-2", startup.Token),
@@ -54,6 +56,8 @@ public class AspireFixture : IAsyncLifetime
 
             MessagingConnectionString = await _app.GetConnectionStringAsync("messaging", startup.Token)
                 ?? throw new InvalidOperationException("The messaging resource did not provide a connection string.");
+            MessagingPriority43ConnectionString = await _app.GetConnectionStringAsync("messaging-priority-43", startup.Token)
+                ?? throw new InvalidOperationException("The RabbitMQ 4.3 priority resource did not provide a connection string.");
             var delayed = _app.GetEndpoint("messaging-delayed", "amqp");
             MessagingDelayedConnectionString = $"amqp://guest:guest@{delayed.Host}:{delayed.Port}";
             if (_certificates is not null)
@@ -79,6 +83,7 @@ public class AspireFixture : IAsyncLifetime
         _builder = null;
         _certificates = null;
         MessagingConnectionString = null;
+        MessagingPriority43ConnectionString = null;
         MessagingDelayedConnectionString = null;
         TlsConnectionString = null;
         UntrustedTlsConnectionString = null;

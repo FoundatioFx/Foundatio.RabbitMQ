@@ -6,6 +6,10 @@ builder.AddRabbitMQ("messaging")
     .WithManagementPlugin()
     .WithImageTag("4.2.5-management");
 
+builder.AddRabbitMQ("messaging-priority-43")
+    .WithManagementPlugin()
+    .WithImageTag("4.3.6-management");
+
 builder.AddContainer("messaging-delayed", "foundatiorabbitmq-rabbitmq-delayed", "latest")
     .WithEndpoint(targetPort: 5672, name: "amqp", scheme: "tcp")
     .WithEndpoint(targetPort: 15672, name: "management", scheme: "http");
