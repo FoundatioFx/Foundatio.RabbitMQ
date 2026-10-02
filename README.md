@@ -100,7 +100,9 @@ The library supports classic and quorum queues on the pinned 4.2.5 test baseline
 | Quorum consumer timeout | Unavailable | `ConsumerTimeout()` |
 | Single active consumer | Supported | Supported |
 
-`UseMessagePriority()` configures classic queues only and fails when combined with `UseQuorumQueues()`. Quorum priorities are built in; publishers can still set the message `Priority` in either mode.
+`UseMessagePriority()` configures classic queues only and fails when combined with `UseQuorumQueues()`. Quorum priorities are built in on RabbitMQ 4.x; RabbitMQ 3.13 quorum queues ignore message priority. Publishers can still set the message `Priority` in either mode.
+
+**Quorum upgrade behavior:** moving from 4.2 to 4.3 changes ordering. Priorities 5 and 10 previously shared the high group; 4.3 orders 10 ahead of 5. Normal traffic loses its guaranteed share under sustained higher-priority traffic. An omitted priority becomes 4 instead of belonging to the older normal group. RabbitMQ.Client 7.2.2 omits priority zero, so `Priority = "0"` also uses that broker default. Audit workloads that mix explicit, omitted, and zero priorities before upgrading; priorities cannot preempt a delivery already sent to a consumer. See the [4.2 priority rules](https://www.rabbitmq.com/docs/4.2/priority) and [4.3 priority rules](https://www.rabbitmq.com/docs/priority).
 
 These features use the AMQP 0.9.1 client. AMQP 1.0 delivery annotations, rejected-by details, and consumer activity notifications are outside this provider's protocol. See the [RabbitMQ priority guide](https://www.rabbitmq.com/docs/priority) for the differences between classic and quorum queues.
 
@@ -121,7 +123,7 @@ The transport instrumentation package is not required for Foundatio's applicatio
 
 ## Development
 
-All repository-managed broker configurations stay on **RabbitMQ 4.2.5**. The delayed-exchange plugin artifact is independently versioned `4.2.0`; no 4.3 broker upgrade is included. This compatibility pin is not a broker security/support-lifecycle certification.
+The main broker, TLS, delayed-delivery and chaos configurations stay on **RabbitMQ 4.2.5**. A separate owned **4.3.6** broker runs the priority compatibility scenarios in CI. The delayed-exchange plugin artifact is independently versioned `4.2.0`; the priority tests do not establish full-provider compatibility with 4.3. This compatibility pin is not a broker security/support-lifecycle certification.
 
 From this repository root, with Docker and the required .NET SDK installed:
 
