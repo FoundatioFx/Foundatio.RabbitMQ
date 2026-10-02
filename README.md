@@ -82,7 +82,7 @@ The `rabbitmq_delayed_message_exchange` plugin is [archived and no longer mainta
 
 **Supported (AMQP 0.9.1 compatible):**
 
-- 32 strict message priority levels on quorum queues (via `UseMessagePriority()`)
+- 32 strict message priority levels on quorum queues automatically; `UseMessagePriority()` configures classic queues only
 - Delayed retries with linear backoff (via `UseDelayedRetries()`)
 - Per-queue consumer timeouts (via `ConsumerTimeout()`)
 - Single active consumer (via `UseSingleActiveConsumer()`)

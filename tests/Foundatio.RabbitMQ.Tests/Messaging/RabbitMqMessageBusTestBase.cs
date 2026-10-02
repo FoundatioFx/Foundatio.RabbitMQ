@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Concurrent;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Foundatio.AsyncEx;
@@ -8,6 +7,7 @@ using Foundatio.Messaging;
 using Foundatio.Tests.Extensions;
 using Foundatio.Tests.Messaging;
 using Microsoft.Extensions.Logging;
+using RabbitMQ.Client;
 using Xunit;
 
 namespace Foundatio.RabbitMQ.Tests.Messaging;
@@ -290,43 +290,66 @@ public abstract class RabbitMqMessageBusTestBase(string connectionString, ITestO
         // Arrange
         string topic = $"test_topic_priority_{DateTime.UtcNow.Ticks}";
         string queueName = $"{topic}_{Guid.NewGuid():N}";
-
+        var factory = new ConnectionFactory { Uri = new Uri(ConnectionString) };
+        await using var connection = await factory.CreateConnectionAsync(TestCancellationToken);
+        // Strict quorum priority ordering requires RabbitMQ 4.3+; 4.2 uses normal/high tiers.
+        Assert.SkipWhen(RabbitMQMessageBus.ParseServerVersion(connection.ServerProperties) is not { } version
+            || version < new Version(4, 3), "Strict quorum priority ordering requires RabbitMQ 4.3+");
         await using var publisher = new RabbitMQMessageBus(o => o
             .ConnectionString(ConnectionString)
+            .Topic(topic)
             .SubscriptionQueueName(queueName)
             .AcknowledgementStrategy(AcknowledgementStrategy.Automatic)
             .UseQuorumQueues()
-            .UseMessagePriority()
             .PrefetchCount(1)
+            .PublisherConfirmsEnabled()
             .LoggerFactory(Log));
-
-        await publisher.PublishAsync(new SimpleMessageA { Data = "low" },
-            new MessageOptions { Properties = { ["Priority"] = "1" } }, TestCancellationToken);
-        await publisher.PublishAsync(new SimpleMessageA { Data = "high" },
-            new MessageOptions { Properties = { ["Priority"] = "10" } }, TestCancellationToken);
-        await publisher.PublishAsync(new SimpleMessageA { Data = "medium" },
-            new MessageOptions { Properties = { ["Priority"] = "5" } }, TestCancellationToken);
-
-        await Task.Delay(TimeSpan.FromMilliseconds(500), TestCancellationToken);
-
         var received = new ConcurrentQueue<string>();
         var countdownEvent = new AsyncCountdownEvent(3);
+        var warmupReceived = new AsyncManualResetEvent();
+        var releaseWarmup = new AsyncManualResetEvent();
 
-        // Act
-        await publisher.SubscribeAsync<SimpleMessageA>(msg =>
+        try
         {
-            received.Enqueue(msg.Data!);
-            countdownEvent.Signal();
-        }, TestCancellationToken);
+            await publisher.SubscribeAsync<SimpleMessageA>(async msg =>
+            {
+                if (msg.Data == "warmup")
+                {
+                    warmupReceived.Set();
+                    await releaseWarmup.WaitAsync(TestCancellationToken);
+                    return;
+                }
 
-        await countdownEvent.WaitAsync(TimeSpan.FromSeconds(10));
+                received.Enqueue(msg.Data!);
+                countdownEvent.Signal();
+            }, TestCancellationToken);
 
-        // Assert
-        var messages = received.ToArray();
-        Assert.Equal(3, messages.Length);
-        Assert.Equal("high", messages[0]);
-        Assert.Equal("medium", messages[1]);
-        Assert.Equal("low", messages[2]);
+            // Hold the only prefetched delivery so the priority messages wait in the queue.
+            await publisher.PublishAsync(new SimpleMessageA { Data = "warmup" }, cancellationToken: TestCancellationToken);
+            await warmupReceived.WaitAsync(TestCancellationToken).WaitAsync(TimeSpan.FromSeconds(10), TestCancellationToken);
+            await publisher.PublishAsync(new SimpleMessageA { Data = "low" },
+                new MessageOptions { Properties = { ["Priority"] = "1" } }, TestCancellationToken);
+            await publisher.PublishAsync(new SimpleMessageA { Data = "high" },
+                new MessageOptions { Properties = { ["Priority"] = "10" } }, TestCancellationToken);
+            await publisher.PublishAsync(new SimpleMessageA { Data = "medium" },
+                new MessageOptions { Properties = { ["Priority"] = "5" } }, TestCancellationToken);
+
+            // Act
+            releaseWarmup.Set();
+            await countdownEvent.WaitAsync(TimeSpan.FromSeconds(10));
+
+            // Assert
+            var messages = received.ToArray();
+            Assert.Equal(3, messages.Length);
+            Assert.Equal("high", messages[0]);
+            Assert.Equal("medium", messages[1]);
+            Assert.Equal("low", messages[2]);
+        }
+        finally
+        {
+            releaseWarmup.Set();
+            await CleanupMessageBusAsync(publisher);
+        }
     }
 
     [Fact]
