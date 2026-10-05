@@ -1,9 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Aspire.Hosting.Testing;
 using Foundatio.Messaging;
 using Foundatio.Tests.Messaging;
 using Foundatio.Xunit;
@@ -124,8 +128,10 @@ public class RabbitMqTerminalContractTests(AspireFixture fixture, ITestOutputHel
         await RabbitMqReliabilityTestContext.WaitAsync(() => bus.ActiveDeliveryCount == 0, token);
     }
 
-    [Fact]
-    public async Task SubscribeAsync_WithExplicitDiscardAndNoDestination_DiscardsExhaustedDeliveryAsync()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SubscribeAsync_WithExhaustedDeliveryAndNoDestination_DiscardsAndContinuesAsync(bool quorum)
     {
         Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
 
@@ -133,24 +139,110 @@ public class RabbitMqTerminalContractTests(AspireFixture fixture, ITestOutputHel
         using var timeout = CreateTimeout();
         var token = timeout.Token;
         await using var context = await RabbitMqReliabilityTestContext.CreateAsync(fixture.MessagingConnectionString!, Log, token);
-        var options = context.Options();
+        var options = context.Options(quorum);
         options.RequireSuccessfulDispatch = false;
         options.DeadLetterExchange = null;
-        options.DiscardOnDeliveryLimit = true;
         options.DeliveryLimit = 0;
-        int calls = 0;
+        int failures = 0;
+        var healthy = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var bus = new RabbitMQMessageBus(options);
-        await bus.SubscribeAsync<SimpleMessageA>(_ =>
+        await bus.SubscribeAsync<SimpleMessageA>(message =>
         {
-            Interlocked.Increment(ref calls);
-            throw new InvalidOperationException("Explicitly discardable test message");
+            if (message.Data == "poison")
+            {
+                Interlocked.Increment(ref failures);
+                throw new InvalidOperationException("Synthetic exhausted message");
+            }
+            healthy.TrySetResult();
         }, token);
+
         // Act
-        await bus.PublishAsync(new SimpleMessageA { Data = "discardable" }, cancellationToken: token);
-        await RabbitMqReliabilityTestContext.WaitAsync(() => Volatile.Read(ref calls) == 1 && bus.ActiveDeliveryCount == 0, token);
-        await bus.DisposeAsync();
+        await bus.PublishAsync(new SimpleMessageA { Data = "poison" }, cancellationToken: token);
+        await bus.PublishAsync(new SimpleMessageA { Data = "healthy" }, cancellationToken: token);
+        await healthy.Task.WaitAsync(TimeSpan.FromSeconds(10), token);
+        await RabbitMqReliabilityTestContext.WaitAsync(() => bus.ActiveDeliveryCount == 0, token);
+
         // Assert
+        Assert.Equal(1, Volatile.Read(ref failures));
+        Assert.True(bus.IsSubscriptionReady);
+        Assert.Null(bus.LastDeliveryError);
+        await bus.DisposeAsync();
         Assert.Null(await context.Admin.BasicGetAsync(context.Source, false, token));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task SubscribeAsync_WithExhaustedDelivery_UsesBrokerDeadLetteringAsync(bool quorum, bool policy)
+    {
+        Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
+
+        // Arrange
+        using var timeout = CreateTimeout();
+        var token = timeout.Token;
+        await using var context = await RabbitMqReliabilityTestContext.CreateAsync(fixture.MessagingConnectionString!, Log, token);
+        await context.CreateDestinationAsync(token);
+        var options = context.Options(quorum);
+        options.RequireSuccessfulDispatch = false;
+        options.DeliveryLimit = 0;
+        var originalUri = new Uri(fixture.MessagingConnectionString!);
+        using var management = fixture.App.CreateHttpClient("messaging", "management");
+        management.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic",
+            Convert.ToBase64String(Encoding.UTF8.GetBytes(Uri.UnescapeDataString(originalUri.UserInfo))));
+        string policyPath = $"api/policies/%2F/{context.Topic}";
+        try
+        {
+            if (policy)
+            {
+                options.DeadLetterExchange = null;
+                options.DeadLetterRoutingKey = null;
+                using var created = await management.PutAsJsonAsync(policyPath, new
+                {
+                    pattern = $"^{context.Source}$",
+                    definition = new Dictionary<string, object?>
+                    {
+                        ["dead-letter-exchange"] = context.Dlx,
+                        ["dead-letter-routing-key"] = "quarantine"
+                    },
+                    priority = 1
+                }, token);
+                created.EnsureSuccessStatusCode();
+            }
+            var healthy = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            await using var bus = new RabbitMQMessageBus(options);
+            await bus.SubscribeAsync<SimpleMessageA>(message =>
+            {
+                if (message.Data == "poison")
+                    throw new InvalidOperationException("Synthetic exhausted message");
+                healthy.TrySetResult();
+            }, token);
+            string id = Guid.NewGuid().ToString("N");
+
+            // Act
+            await bus.PublishAsync(new SimpleMessageA { Data = "poison" }, new MessageOptions { UniqueId = id }, token);
+            await bus.PublishAsync(new SimpleMessageA { Data = "healthy" }, cancellationToken: token);
+            var dead = await context.ReadAsync(context.Destination, token);
+            await healthy.Task.WaitAsync(TimeSpan.FromSeconds(10), token);
+            await RabbitMqReliabilityTestContext.WaitAsync(() => bus.ActiveDeliveryCount == 0, token);
+
+            // Assert
+            Assert.Equal(id, dead.BasicProperties.MessageId);
+            Assert.NotNull(dead.BasicProperties.Headers);
+            Assert.True(dead.BasicProperties.Headers.ContainsKey("x-death"));
+            Assert.True(bus.IsSubscriptionReady);
+            Assert.Null(bus.LastDeliveryError);
+        }
+        finally
+        {
+            if (policy)
+            {
+                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                using var deleted = await management.DeleteAsync(policyPath, cleanup.Token);
+                deleted.EnsureSuccessStatusCode();
+            }
+        }
     }
 
     [Theory]

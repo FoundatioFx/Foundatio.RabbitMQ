@@ -82,9 +82,10 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
 
     /// <summary>
     /// Maximum failed redeliveries after the initial attempt; -1 means unlimited.
-    /// Classic retries use a confirmed, subscription-local handoff. On exhaustion, a configured
-    /// dead-letter exchange receives a confirmed handoff; without one, the original is retained
-    /// unless DiscardOnDeliveryLimit is explicitly enabled. Broker limits and policies are separate:
+    /// Classic retries use a confirmed, subscription-local handoff. On exhaustion, the broker
+    /// dead-letters the delivery according to queue arguments or policies, or discards it without a DLX.
+    /// RequireSuccessfulDispatch instead uses a confirmed application terminal transfer.
+    /// Broker limits and policies are separate:
     /// a finite quorum broker delivery limit can also act on connection-loss redeliveries.
     /// </summary>
     public long DeliveryLimit { get; set; } = 2;
@@ -108,7 +109,8 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
 
     /// <summary>
     /// Require actual completion of matching live handlers before acknowledgement. Requires Automatic,
-    /// a configured DeadLetterExchange, and DiscardOnDeliveryLimit=false. Provision the destination separately.
+    /// a configured DeadLetterExchange, and confirmed terminal transfers. Provision the destination separately.
+    /// Failed terminal transfers retain the original delivery and retry until cancellation or repair.
     /// Unmatched types and malformed typed payloads become terminal failures instead of intentional
     /// pub/sub filtering. False preserves the existing best-effort filtering/dispatch contract.
     /// </summary>
@@ -120,12 +122,6 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     /// This is not a guarantee of replicated scheduling or eventual destination availability.
     /// </summary>
     public bool RequireBrokerDelayedDelivery { get; set; }
-
-    /// <summary>
-    /// Explicitly opt into the legacy discard-on-exhaustion behavior when no dead-letter exchange
-    /// is configured. Default: false. Discard is logged and must not be used for required work.
-    /// </summary>
-    public bool DiscardOnDeliveryLimit { get; set; }
 
     /// <summary>
     /// Maximum individual transport cleanup wait, including lock acquisition. Cleanup can continue after
@@ -163,9 +159,11 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     public TimeSpan? NetworkRecoveryInterval { get; set; }
 
     /// <summary>
-    /// Exchange used for terminal handoffs and the broker x-dead-letter-exchange argument.
-    /// Provision its durable destination separately. Client terminal handoffs are confirmed and
-    /// mandatory; broker-triggered expiry or delivery limits have their own dead-letter safety policy.
+    /// Sets the broker x-dead-letter-exchange argument. Ordinary exhausted deliveries use broker
+    /// dead-lettering, which is at-most-once unless quorum at-least-once dead-lettering is configured.
+    /// RequireSuccessfulDispatch also uses this destination for confirmed, mandatory application transfers.
+    /// Provision the destination separately. Broker policies can configure a DLX without this option
+    /// for ordinary dispatch; required dispatch needs an explicit application transfer destination.
     /// </summary>
     public string? DeadLetterExchange { get; set; }
 
@@ -280,8 +278,6 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
             throw new InvalidOperationException("MaxPriority applies only to classic queues and cannot be used with quorum queues.");
         if (options.RequireSuccessfulDispatch && options.AcknowledgementStrategy != AcknowledgementStrategy.Automatic)
             throw new ArgumentException("RequireSuccessfulDispatch requires Automatic acknowledgements.", nameof(options));
-        if (options.RequireSuccessfulDispatch && options.DiscardOnDeliveryLimit)
-            throw new ArgumentException("Required dispatch cannot enable discard on delivery exhaustion.", nameof(options));
         if (options.RequireSuccessfulDispatch && String.IsNullOrWhiteSpace(options.DeadLetterExchange))
             throw new ArgumentException("RequireSuccessfulDispatch requires a configured DeadLetterExchange for terminal deliveries.", nameof(options));
         if (options.RequireBrokerDelayedDelivery && (!options.IsDurable || (!options.PublisherConfirmsEnabled && !options.RequirePublishRouting)))
@@ -411,13 +407,6 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
     public RabbitMQMessageBusOptionsBuilder RequireBrokerDelayedDelivery(bool required = true)
     {
         Target.RequireBrokerDelayedDelivery = required;
-        return this;
-    }
-
-    /// <summary>Explicitly allow discarding exhausted deliveries without a configured DLX.</summary>
-    public RabbitMQMessageBusOptionsBuilder DiscardOnDeliveryLimit(bool discard = true)
-    {
-        Target.DiscardOnDeliveryLimit = discard;
         return this;
     }
 

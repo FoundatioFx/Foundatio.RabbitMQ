@@ -572,29 +572,24 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
     private async Task CompleteTerminalDeliveryAsync(BasicDeliverEventArgs envelope, IChannel channel,
         DeliveryEpoch epoch, Exception failure, CancellationToken cancellationToken)
     {
-        if (!String.IsNullOrWhiteSpace(_options.DeadLetterExchange))
+        if (!_options.RequireSuccessfulDispatch)
         {
-            var properties = RabbitMQMessageConverter.CopyHandoffProperties(envelope);
-            if (properties.Expiration is not null)
-                properties.Headers![RabbitMQConstants.XOriginalExpirationHeader] = properties.Expiration;
-            properties.Expiration = null;
-            properties.Headers![RabbitMQConstants.FailureTypeHeader] = failure.GetType().Name;
-            properties.Headers[RabbitMQConstants.OriginalExchangeHeader] = envelope.Exchange;
-            properties.Headers[RabbitMQConstants.OriginalRoutingKeyHeader] = envelope.RoutingKey;
-            await TransferAndAcknowledgeAsync(envelope, channel, epoch, _options.DeadLetterExchange,
-                _options.DeadLetterRoutingKey ?? envelope.RoutingKey, properties, cancellationToken).AnyContext();
-        }
-        else if (_options.DiscardOnDeliveryLimit)
-        {
-            _logger.LogWarning("Discarding exhausted delivery because DiscardOnDeliveryLimit was explicitly enabled");
+            // Let broker arguments or policies select the DLX; without one, RabbitMQ discards.
+            _logger.LogWarning("Delivery exhausted its retry budget; rejecting for broker dead-lettering or discard");
             if (CanSettle(channel, epoch))
-                await channel.BasicAckAsync(envelope.DeliveryTag, false, cancellationToken).AnyContext();
+                await channel.BasicRejectAsync(envelope.DeliveryTag, false, cancellationToken).AnyContext();
+            return;
         }
-        else
-        {
-            await RetainDeliveryAsync(new MessageBusException(
-                "Delivery reached its terminal outcome without a configured destination; the original remains unacknowledged.", failure), cancellationToken).AnyContext();
-        }
+
+        var properties = RabbitMQMessageConverter.CopyHandoffProperties(envelope);
+        if (properties.Expiration is not null)
+            properties.Headers![RabbitMQConstants.XOriginalExpirationHeader] = properties.Expiration;
+        properties.Expiration = null;
+        properties.Headers![RabbitMQConstants.FailureTypeHeader] = failure.GetType().Name;
+        properties.Headers[RabbitMQConstants.OriginalExchangeHeader] = envelope.Exchange;
+        properties.Headers[RabbitMQConstants.OriginalRoutingKeyHeader] = envelope.RoutingKey;
+        await TransferAndAcknowledgeAsync(envelope, channel, epoch, _options.DeadLetterExchange!,
+            _options.DeadLetterRoutingKey ?? envelope.RoutingKey, properties, cancellationToken).AnyContext();
     }
 
     private async Task RetainDeliveryAsync(Exception exception, CancellationToken cancellationToken)
