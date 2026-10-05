@@ -69,7 +69,7 @@ Option<ushort> prefetchCountOption = new("--prefetch-count")
 
 Option<long> deliveryLimitOption = new("--delivery-limit")
 {
-    Description = "Maximum delivery attempts before discarding",
+    Description = "Maximum failed redeliveries after the initial attempt before terminal handling",
     DefaultValueFactory = _ => 2
 };
 

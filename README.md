@@ -76,11 +76,13 @@ await messageBus.PublishAsync(new MyMessage { Data = "Hello" });
 - [Branch guide: delivery safety and adoption](https://github.com/FoundatioFx/Foundatio/blob/docs/rabbitmq-4.2.5-delivery-contracts/docs/guide/implementations/rabbitmq-delivery-safety.md)
 - [Branch guide: testing and verification](https://github.com/FoundatioFx/Foundatio/blob/docs/rabbitmq-4.2.5-delivery-contracts/docs/guide/implementations/rabbitmq-verification.md)
 
-The branch guides describe the companion implementation, including changed exhaustion behavior and opt-in strict delivery contracts. They are not a claim that those APIs are already released. Review the two PRs together and coordinate documentation publication with the provider release. Keep these branch links available until the corresponding published guides exist.
+The branch guides describe the companion implementation, including broker dead-lettering and opt-in strict delivery contracts. They are not a claim that those APIs are already released. Review the two PRs together and coordinate documentation publication with the provider release. Keep these branch links available until the corresponding published guides exist.
 
-**Breaking behavior:** exhausted `Automatic` deliveries now remain unacknowledged when no terminal destination is configured, instead of being silently discarded. This can block consumption and grow the broker backlog. Configure quarantine and capacity policies, or explicitly choose `DiscardOnDeliveryLimit` for discardable messages. `FireAndForget` remains the default; `RequireSuccessfulDispatch` requires Automatic, a configured `DeadLetterExchange`, and no discard.
+**Exhaustion behavior:** ordinary `Automatic` deliveries are rejected without requeue after the retry budget is exhausted. RabbitMQ routes them through a DLX configured by queue arguments or broker policy, or discards them when none is configured. Healthy messages continue; exhaustion does not hold the subscription indefinitely. Classic exhausted deliveries now honor configured dead-lettering instead of being acknowledged and discarded. `FireAndForget` remains the default acknowledgement mode.
 
-Classic and quorum queues both support provider-confirmed retries/terminal handling. Replication and broker-managed at-least-once dead-lettering are quorum capabilities; changing a builder option cannot convert an existing classic queue.
+`RequireSuccessfulDispatch` opts into confirmed, mandatory application terminal transfers. It requires Automatic and an explicit `DeadLetterExchange`; failed transfers retain the source and retry until cancellation or repair. Both classic and quorum support this opt-in path, and duplicates remain possible. Ordinary broker dead-lettering is at-most-once by default; quorum queues can enable broker-managed at-least-once dead-lettering. Broker dead-lettering supplies `x-death` metadata; application transfers use the provider's failure headers. See [RabbitMQ dead-letter safety](https://www.rabbitmq.com/docs/dlx#safety).
+
+For important work, provision and monitor an error queue, use finite prefetch and suitable capacity policies, and plan how to replay or remove failures. Replication and broker-managed at-least-once dead-lettering are quorum capabilities; changing a builder option cannot convert an existing classic queue.
 
 ### Delayed message delivery
 
