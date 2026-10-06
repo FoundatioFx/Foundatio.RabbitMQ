@@ -171,18 +171,23 @@ public class RabbitMqHandoffFailureTests(AspireFixture fixture, ITestOutputHelpe
     }
 
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(false, true)]
-    [InlineData(true, false)]
-    [InlineData(true, true)]
-    public async Task SubscribeAsync_WithFullClassicRetryQueue_RespectsRetryBudgetAndContinuesAsync(bool required, bool exhaust)
+    [InlineData(false, false, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(true, true, true)]
+    public async Task SubscribeAsync_WithFullClassicRetryQueue_RespectsRetryBudgetAndContinuesAsync(bool rabbitMq43, bool required, bool exhaust)
     {
         Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
 
         // Arrange
         using var timeout = CreateTimeout();
         var token = timeout.Token;
-        await using var context = await RabbitMqReliabilityTestContext.CreateAsync(fixture.MessagingConnectionString!, Log, token);
+        string connectionString = rabbitMq43 ? fixture.MessagingPriority43ConnectionString! : fixture.MessagingConnectionString!;
+        await using var context = await RabbitMqReliabilityTestContext.CreateAsync(connectionString, Log, token);
         await context.CreateDestinationAsync(token);
         var options = context.Options();
         options.RequireSuccessfulDispatch = required;
