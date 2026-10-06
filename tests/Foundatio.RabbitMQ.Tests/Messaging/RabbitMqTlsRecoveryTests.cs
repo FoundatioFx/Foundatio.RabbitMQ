@@ -95,6 +95,9 @@ public class RabbitMqTlsRecoveryTests(AspireFixture fixture, ITestOutputHelper o
             // Assert
             Assert.False(publisher.IsOpen);
             Assert.False(subscriber.IsOpen);
+            // Client shutdown can precede the broker removing its consumer and requeueing deliveries.
+            while ((await admin.QueueDeclarePassiveAsync(options.SubscriptionQueueName, timeout.Token)).ConsumerCount != 0)
+                await Task.Delay(TimeSpan.FromMilliseconds(50), timeout.Token);
             string pending = AddExpected(receipts);
             await control.PublishAsync(new Probe { Id = pending }, cancellationToken: timeout.Token).WaitAsync(timeout.Token);
             var queue = await admin.QueueDeclarePassiveAsync(options.SubscriptionQueueName, timeout.Token);
