@@ -170,8 +170,12 @@ public class RabbitMqHandoffFailureTests(AspireFixture fixture, ITestOutputHelpe
             publicationWasAccepted, expectedCopies, id);
     }
 
-    [Fact]
-    public async Task SubscribeAsync_WithFullClassicRetryQueue_RetainsUntilCapacityReturnsAsync()
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task SubscribeAsync_WithFullClassicRetryQueue_RespectsRetryBudgetAndContinuesAsync(bool required, bool exhaust)
     {
         Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
 
@@ -179,39 +183,130 @@ public class RabbitMqHandoffFailureTests(AspireFixture fixture, ITestOutputHelpe
         using var timeout = CreateTimeout();
         var token = timeout.Token;
         await using var context = await RabbitMqReliabilityTestContext.CreateAsync(fixture.MessagingConnectionString!, Log, token);
+        await context.CreateDestinationAsync(token);
         var options = context.Options();
+        options.RequireSuccessfulDispatch = required;
+        options.DeliveryLimit = 2;
         options.Arguments!["x-max-length"] = 1L;
         options.Overflow = QueueOverflowBehavior.RejectPublish;
         await using var bus = new RabbitMQMessageBus(options);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var fail = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var healthy = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var identities = new ConcurrentQueue<string>();
         int attempts = 0;
-        await bus.SubscribeAsync<SimpleMessageA>(async _ =>
+        await bus.SubscribeAsync<IMessage<SimpleMessageA>>(async message =>
         {
-            if (Interlocked.Increment(ref attempts) == 1)
+            if (message.Body.Data == "healthy")
+            {
+                healthy.TrySetResult();
+                return;
+            }
+            identities.Enqueue(message.UniqueId!);
+            int attempt = Interlocked.Increment(ref attempts);
+            if (attempt == 1)
             {
                 entered.TrySetResult();
                 await fail.Task.WaitAsync(token);
-                throw new InvalidOperationException("Synthetic retry after source fills");
             }
+            if (exhaust || attempt == 1)
+                throw new InvalidOperationException("Synthetic retry after source fills");
         }, token);
 
         // Act
         await bus.PublishAsync(new SimpleMessageA { Data = "original" }, new MessageOptions { UniqueId = "original" }, token);
         await entered.Task.WaitAsync(token);
-        await bus.PublishAsync(new SimpleMessageA { Data = "filler" }, new MessageOptions { UniqueId = "filler" }, token);
+        await bus.PublishAsync(new SimpleMessageA { Data = "healthy" }, cancellationToken: token);
         fail.TrySetResult();
-        await RabbitMqReliabilityTestContext.WaitAsync(() => bus.LastDeliveryError is not null, token);
+        await healthy.Task.WaitAsync(TimeSpan.FromSeconds(10), token);
+        await RabbitMqReliabilityTestContext.WaitAsync(() => bus.ActiveDeliveryCount == 0, token);
 
         // Assert
-        Assert.False(bus.IsSubscriptionReady);
-        Assert.Equal(1, Volatile.Read(ref attempts));
-        var filler = await context.Admin.BasicGetAsync(context.Source, true, token);
-        Assert.NotNull(filler);
-        Assert.Equal("filler", filler.BasicProperties.MessageId);
-        await RabbitMqReliabilityTestContext.WaitAsync(() => Volatile.Read(ref attempts) == 2 && bus.ActiveDeliveryCount == 0, token);
+        int expectedAttempts = exhaust ? 3 : 2;
+        Assert.Equal(expectedAttempts, Volatile.Read(ref attempts));
+        Assert.Equal(Enumerable.Repeat("original", expectedAttempts), identities.ToArray());
+        if (exhaust)
+            Assert.Equal("original", (await context.ReadAsync(context.Destination, token)).BasicProperties.MessageId);
         Assert.True(bus.IsSubscriptionReady);
+        Assert.Null(bus.LastDeliveryError);
         Assert.Equal(0u, (await context.Admin.QueueDeclarePassiveAsync(context.Source, token)).MessageCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SubscribeAsync_WithLeastPrivilegeClassicRetry_RequiresDefaultExchangeWritePermissionAsync(bool permitted)
+    {
+        Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
+
+        // Arrange
+        using var timeout = CreateTimeout();
+        var token = timeout.Token;
+        await using var context = await RabbitMqReliabilityTestContext.CreateAsync(fixture.MessagingConnectionString!, Log, token);
+        var originalUri = new Uri(fixture.MessagingConnectionString!);
+        using var management = fixture.App.CreateHttpClient("messaging", "management");
+        management.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic",
+            Convert.ToBase64String(Encoding.UTF8.GetBytes(Uri.UnescapeDataString(originalUri.UserInfo))));
+        string user = context.Topic;
+        string password = Guid.NewGuid().ToString("N");
+        using var created = await management.PutAsJsonAsync($"api/users/{user}", new { password, tags = "" }, token);
+        created.EnsureSuccessStatusCode();
+        try
+        {
+            string prefix = $"^{context.Topic}.*$";
+            string retryWrite = $"^(amq\\.default|{context.Topic}.*)$";
+            using var permissions = await management.PutAsJsonAsync($"api/permissions/%2F/{user}", new
+            {
+                configure = prefix,
+                read = prefix,
+                write = permitted ? retryWrite : prefix
+            }, token);
+            permissions.EnsureSuccessStatusCode();
+            var options = context.Options();
+            options.ConnectionString = new UriBuilder(originalUri) { UserName = user, Password = password }.Uri.AbsoluteUri;
+            options.RequireSuccessfulDispatch = false;
+            options.DeadLetterExchange = null;
+            int attempts = 0;
+            var received = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            await using var bus = new RabbitMQMessageBus(options);
+            await bus.SubscribeAsync<IMessage<SimpleMessageA>>(message =>
+            {
+                if (Interlocked.Increment(ref attempts) == 1)
+                    throw new InvalidOperationException("Synthetic first attempt failure");
+                received.TrySetResult(message.UniqueId!);
+            }, token);
+
+            // Act
+            await bus.PublishAsync(new SimpleMessageA { Data = "retry" }, new MessageOptions { UniqueId = "retry" }, token);
+            if (!permitted)
+            {
+                await RabbitMqReliabilityTestContext.WaitAsync(() => bus.LastDeliveryError is not null, token);
+                Assert.False(bus.IsSubscriptionReady);
+                Assert.Equal(1, Volatile.Read(ref attempts));
+                Assert.False(received.Task.IsCompleted);
+                using var repaired = await management.PutAsJsonAsync($"api/permissions/%2F/{user}", new
+                {
+                    configure = prefix,
+                    read = prefix,
+                    write = retryWrite
+                }, token);
+                repaired.EnsureSuccessStatusCode();
+            }
+            string id = await received.Task.WaitAsync(token);
+            await RabbitMqReliabilityTestContext.WaitAsync(() => bus.ActiveDeliveryCount == 0, token);
+
+            // Assert
+            Assert.Equal("retry", id);
+            Assert.Equal(2, Volatile.Read(ref attempts));
+            Assert.True(bus.IsSubscriptionReady);
+            Assert.Null(bus.LastDeliveryError);
+        }
+        finally
+        {
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var deleted = await management.DeleteAsync($"api/users/{user}", cleanup.Token);
+            deleted.EnsureSuccessStatusCode();
+        }
     }
 
     [Theory]

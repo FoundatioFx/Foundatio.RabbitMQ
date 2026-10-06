@@ -476,70 +476,92 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         Interlocked.Increment(ref _activeDeliveries);
         try
         {
-            // Maintenance closes an unused consumer. Until then a quick resubscription
-            // may use this retained delivery; do not ACK an empty dispatch snapshot.
-            while (_subscribers.IsEmpty)
-                await Task.Delay(TimeSpan.FromMilliseconds(100), token).AnyContext();
-            token.ThrowIfCancellationRequested();
-            Exception? failure = null;
-            try
+            long retryCount = -1;
+            while (true)
             {
-                var message = ConvertToMessage(envelope);
-                if (_options.RequireSuccessfulDispatch)
+                // Maintenance closes an unused consumer. Until then a quick resubscription
+                // may use this retained delivery; do not ACK an empty dispatch snapshot.
+                while (_subscribers.IsEmpty)
+                    await Task.Delay(TimeSpan.FromMilliseconds(100), token).AnyContext();
+                token.ThrowIfCancellationRequested();
+                Exception? failure = null;
+                try
                 {
-                    while (!await DispatchRequiredAsync(message, token).AnyContext())
-                        await Task.Delay(TimeSpan.FromMilliseconds(100), token).AnyContext();
+                    var message = ConvertToMessage(envelope);
+                    if (retryCount >= 0)
+                        message.Properties[RabbitMQConstants.XDeliveryCountHeader] = FormattableString.Invariant($"{retryCount}");
+                    if (_options.RequireSuccessfulDispatch)
+                    {
+                        while (!await DispatchRequiredAsync(message, token).AnyContext())
+                            await Task.Delay(TimeSpan.FromMilliseconds(100), token).AnyContext();
+                    }
+                    else
+                    {
+                        await SendMessageToSubscribersAsync(message).WaitAsync(token).AnyContext();
+                    }
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
+                {
+                    failure = exception;
+                }
+
+                if (_options.AcknowledgementStrategy != AcknowledgementStrategy.Automatic)
+                {
+                    if (failure is not null)
+                        _logger.LogError(failure, "Best-effort handler failed after broker automatic acknowledgement");
+                    return;
+                }
+                if (!CanSettle(channel, epoch))
+                    return;
+                if (failure is null)
+                {
+                    await channel.BasicAckAsync(envelope.DeliveryTag, false, token).AnyContext();
+                    _deliveryError = null;
+                    return;
+                }
+
+                if (retryCount < 0)
+                    retryCount = RabbitMQMessageConverter.GetRetryCountFromHeader(envelope);
+                bool terminal = failure is InvalidDeliveryException || retryCount == Int64.MaxValue
+                    || (_options.DeliveryLimit >= 0 && retryCount >= _options.DeliveryLimit);
+                if (terminal)
+                {
+                    await CompleteTerminalDeliveryAsync(envelope, channel, epoch, failure, retryCount, token).AnyContext();
+                }
+                else if (_topology.IsQuorumQueue)
+                {
+                    if (CanSettle(channel, epoch))
+                        await channel.BasicRejectAsync(envelope.DeliveryTag, true, token).AnyContext();
                 }
                 else
                 {
-                    await SendMessageToSubscribersAsync(message).WaitAsync(token).AnyContext();
+                    if (String.IsNullOrEmpty(queueName))
+                    {
+                        await RetainDeliveryAsync(new MessageBusException("The actual subscription queue is unavailable for a local retry."), token).AnyContext();
+                        return;
+                    }
+                    var properties = RabbitMQMessageConverter.CopyHandoffProperties(envelope);
+                    properties.Headers![RabbitMQConstants.XDeliveryCountHeader] = retryCount + 1;
+                    try
+                    {
+                        await TransferAndAcknowledgeAsync(envelope, channel, epoch, String.Empty, queueName, properties,
+                            retryInPlaceOnNack: true, token).AnyContext();
+                    }
+                    catch (PublishException exception) when (!exception.IsReturn)
+                    {
+                        // The source queue can be full while this callback prevents it from draining.
+                        // Keep the original unacknowledged and consume the same finite retry budget locally.
+                        retryCount++;
+                        _logger.LogWarning(exception, "Retry publication was rejected; retrying the retained delivery locally");
+                        await Task.Delay(TimeSpan.FromSeconds(Math.Min(retryCount, 10)), token).AnyContext();
+                        continue;
+                    }
                 }
-            }
-            catch (OperationCanceledException) when (token.IsCancellationRequested)
-            {
                 return;
-            }
-            catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
-            {
-                failure = exception;
-            }
-
-            if (_options.AcknowledgementStrategy != AcknowledgementStrategy.Automatic)
-            {
-                if (failure is not null)
-                    _logger.LogError(failure, "Best-effort handler failed after broker automatic acknowledgement");
-                return;
-            }
-            if (!CanSettle(channel, epoch))
-                return;
-            if (failure is null)
-            {
-                await channel.BasicAckAsync(envelope.DeliveryTag, false, token).AnyContext();
-                return;
-            }
-
-            long retryCount = RabbitMQMessageConverter.GetRetryCountFromHeader(envelope);
-            bool terminal = failure is InvalidDeliveryException || retryCount == Int64.MaxValue
-                || (_options.DeliveryLimit >= 0 && retryCount >= _options.DeliveryLimit);
-            if (terminal)
-            {
-                await CompleteTerminalDeliveryAsync(envelope, channel, epoch, failure, token).AnyContext();
-            }
-            else if (_topology.IsQuorumQueue)
-            {
-                if (CanSettle(channel, epoch))
-                    await channel.BasicRejectAsync(envelope.DeliveryTag, true, token).AnyContext();
-            }
-            else
-            {
-                if (String.IsNullOrEmpty(queueName))
-                {
-                    await RetainDeliveryAsync(new MessageBusException("The actual subscription queue is unavailable for a local retry."), token).AnyContext();
-                    return;
-                }
-                var properties = RabbitMQMessageConverter.CopyHandoffProperties(envelope);
-                properties.Headers![RabbitMQConstants.XDeliveryCountHeader] = retryCount + 1;
-                await TransferAndAcknowledgeAsync(envelope, channel, epoch, String.Empty, queueName, properties, token).AnyContext();
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -570,7 +592,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         && ReferenceEquals(channel, _subscriberChannel) && channel.IsOpen;
 
     private async Task CompleteTerminalDeliveryAsync(BasicDeliverEventArgs envelope, IChannel channel,
-        DeliveryEpoch epoch, Exception failure, CancellationToken cancellationToken)
+        DeliveryEpoch epoch, Exception failure, long retryCount, CancellationToken cancellationToken)
     {
         if (!_options.RequireSuccessfulDispatch)
         {
@@ -578,6 +600,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
             _logger.LogWarning("Delivery exhausted its retry budget; rejecting for broker dead-lettering or discard");
             if (CanSettle(channel, epoch))
                 await channel.BasicRejectAsync(envelope.DeliveryTag, false, cancellationToken).AnyContext();
+            _deliveryError = null;
             return;
         }
 
@@ -585,11 +608,12 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         if (properties.Expiration is not null)
             properties.Headers![RabbitMQConstants.XOriginalExpirationHeader] = properties.Expiration;
         properties.Expiration = null;
-        properties.Headers![RabbitMQConstants.FailureTypeHeader] = failure.GetType().Name;
+        properties.Headers![RabbitMQConstants.XDeliveryCountHeader] = retryCount;
+        properties.Headers[RabbitMQConstants.FailureTypeHeader] = failure.GetType().Name;
         properties.Headers[RabbitMQConstants.OriginalExchangeHeader] = envelope.Exchange;
         properties.Headers[RabbitMQConstants.OriginalRoutingKeyHeader] = envelope.RoutingKey;
         await TransferAndAcknowledgeAsync(envelope, channel, epoch, _options.DeadLetterExchange!,
-            _options.DeadLetterRoutingKey ?? envelope.RoutingKey, properties, cancellationToken).AnyContext();
+            _options.DeadLetterRoutingKey ?? envelope.RoutingKey, properties, retryInPlaceOnNack: false, cancellationToken).AnyContext();
     }
 
     private async Task RetainDeliveryAsync(Exception exception, CancellationToken cancellationToken)
@@ -608,7 +632,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
     }
 
     private async Task TransferAndAcknowledgeAsync(BasicDeliverEventArgs envelope, IChannel source,
-        DeliveryEpoch epoch, string exchange, string routingKey, BasicProperties properties, CancellationToken cancellationToken)
+        DeliveryEpoch epoch, string exchange, string routingKey, BasicProperties properties, bool retryInPlaceOnNack, CancellationToken cancellationToken)
     {
         // A lost confirmation can produce duplicates. Keep the original until the
         // replacement's confirmation AND routing are known; preserve logical identity.
@@ -629,6 +653,10 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
                     return;
+                }
+                catch (PublishException exception) when (retryInPlaceOnNack && !exception.IsReturn)
+                {
+                    throw;
                 }
                 catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
                 {

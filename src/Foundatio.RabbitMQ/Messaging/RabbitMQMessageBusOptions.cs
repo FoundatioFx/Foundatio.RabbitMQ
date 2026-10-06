@@ -82,7 +82,10 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
 
     /// <summary>
     /// Maximum failed redeliveries after the initial attempt; -1 means unlimited.
-    /// Classic retries use a confirmed, subscription-local handoff. On exhaustion, the broker
+    /// Classic retries use a confirmed, subscription-local handoff, requiring write permission on amq.default.
+    /// A broker NACK retries the retained delivery locally to avoid stalling a full source queue.
+    /// Local attempts count toward this limit but cannot persist across connection loss; unlimited retries
+    /// can block later deliveries. On exhaustion, the broker
     /// dead-letters the delivery according to queue arguments or policies, or discards it without a DLX.
     /// RequireSuccessfulDispatch instead uses a confirmed application terminal transfer.
     /// Broker limits and policies are separate:
