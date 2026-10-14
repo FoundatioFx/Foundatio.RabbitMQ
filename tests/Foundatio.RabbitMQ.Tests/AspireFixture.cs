@@ -15,7 +15,6 @@ public class AspireFixture : IAsyncLifetime
     private DistributedApplication? _app;
     public DistributedApplication App => _app ?? throw new InvalidOperationException("Fixture not initialized - Aspire AppHost failed to start");
     public string? MessagingConnectionString { get; private set; }
-    public string? MessagingDelayedConnectionString { get; private set; }
     public bool ChaosClusterAvailable { get; private set; }
     public bool IsAvailable => _app is not null && MessagingConnectionString is not null;
 
@@ -28,20 +27,6 @@ public class AspireFixture : IAsyncLifetime
         MessagingConnectionString = await _app.GetConnectionStringAsync("messaging");
         if (MessagingConnectionString is null)
             return;
-
-        try
-        {
-            await _app.ResourceNotifications.WaitForResourceAsync(
-                "messaging-delayed", KnownResourceStates.Running)
-                .WaitAsync(TimeSpan.FromSeconds(60));
-
-            var delayedEndpoint = _app.GetEndpoint("messaging-delayed", "amqp");
-            MessagingDelayedConnectionString = $"amqp://guest:guest@{delayedEndpoint.Host}:{delayedEndpoint.Port}";
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
-        {
-            MessagingDelayedConnectionString = null;
-        }
 
         try
         {
