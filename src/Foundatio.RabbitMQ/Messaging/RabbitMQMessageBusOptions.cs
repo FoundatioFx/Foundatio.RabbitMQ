@@ -24,7 +24,13 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     public TimeSpan? DefaultMessageTimeToLive { get; set; }
 
     /// <summary>
-    /// Arguments passed to QueueDeclare. Some brokers use it to implement additional features like message TTL.
+    /// Optional queue declaration arguments for broker features such as message TTL.
+    /// Prefer the fluent builder methods for supported settings, such as UseQuorumQueues()
+    /// and UseMessagePriority(). Use Arguments for settings without a dedicated builder method;
+    /// for example, Arguments(new Dictionary&lt;string, object?&gt; { ["x-message-ttl"] = 60000 }).
+    /// Configure this mutable dictionary before constructing the bus; changing it while running is unsupported.
+    /// See: https://www.rabbitmq.com/docs/queues#optional-arguments
+    /// See: https://www.rabbitmq.com/docs/ttl#per-queue-message-ttl-in-queues
     /// </summary>
     public IDictionary<string, object?>? Arguments { get; set; }
 
@@ -171,13 +177,37 @@ public class RabbitMQMessageBusOptions : SharedMessageBusOptions
     public bool SingleActiveConsumer { get; set; }
 
     /// <summary>
-    /// Maximum number of priority levels for the queue (1-32).
-    /// Messages published with a higher priority value are delivered to consumers before lower-priority messages.
-    /// RabbitMQ 4.3+ quorum queues support 32 strict priority levels.
-    /// Set via the x-max-priority queue argument.
+    /// Maximum message priority for classic queues (1-255). Higher limits cost
+    /// more broker CPU and memory; UseMessagePriority() limits its convenience API to 32.
+    /// Prioritizes queued messages; deliveries already sent to consumers are not reordered.
+    /// Set via the x-max-priority queue argument for classic queues only.
+    /// RabbitMQ 4.2 quorum queues use normal/high tiers; RabbitMQ 4.3+ quorum queues support
+    /// 32 strict priority levels automatically and cannot use this setting.
     /// See: https://www.rabbitmq.com/docs/priority
+    /// See: https://www.rabbitmq.com/docs/4.2/priority#quorum-queues
     /// </summary>
-    public byte? MaxPriority { get; set; }
+    public byte? MaxPriority
+    {
+        get;
+        set
+        {
+            if (value is 0)
+                throw new ArgumentOutOfRangeException(nameof(MaxPriority), value, "Classic queue maximum priority must be positive.");
+
+            field = value;
+        }
+    }
+
+    /// <summary>
+    /// Checks whether the supplied declaration arguments explicitly request a quorum queue.
+    /// This does not discover a broker or virtual-host default, inspect an existing queue,
+    /// or validate other argument types and values.
+    /// </summary>
+    internal static bool IsQuorumQueue(IDictionary<string, object?>? arguments)
+    {
+        return arguments is not null && arguments.TryGetValue("x-queue-type", out object? queueType)
+            && queueType is string type && String.Equals(type, "quorum", StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>
     /// Configures native delayed retry for quorum queues (RabbitMQ 4.3+).
@@ -343,6 +373,9 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
     /// <returns>The builder instance for method chaining.</returns>
     public RabbitMQMessageBusOptionsBuilder UseQuorumQueues()
     {
+        if (Target.MaxPriority.HasValue)
+            throw new InvalidOperationException("MaxPriority applies only to classic queues and cannot be used with quorum queues.");
+
         Target.SubscriptionQueueAutoDelete = false;
         Target.IsSubscriptionQueueExclusive = false;
 
@@ -429,15 +462,17 @@ public class RabbitMQMessageBusOptionsBuilder : SharedMessageBusOptionsBuilder<R
     }
 
     /// <summary>
-    /// Enables message priority on the queue. Messages published with higher priority are
-    /// delivered to consumers before lower-priority messages.
-    /// RabbitMQ 4.3+ quorum queues support up to 32 strict priority levels.
+    /// Sets x-max-priority for classic queues only. RabbitMQ 4.2 quorum queues use
+    /// normal/high tiers; RabbitMQ 4.3+ quorum queues have 32 strict levels automatically.
+    /// Cannot be combined with UseQuorumQueues().
     /// </summary>
-    /// <param name="maxPriority">Maximum priority levels (1-32). Default: 32.</param>
+    /// <param name="maxPriority">Classic queue maximum priority (1-32). Default: 32.</param>
     public RabbitMQMessageBusOptionsBuilder UseMessagePriority(byte maxPriority = 32)
     {
         ArgumentOutOfRangeException.ThrowIfZero(maxPriority);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(maxPriority, (byte)32);
+        if (RabbitMQMessageBusOptions.IsQuorumQueue(Target.Arguments))
+            throw new InvalidOperationException("MaxPriority applies only to classic queues and cannot be used with quorum queues.");
 
         Target.MaxPriority = maxPriority;
         return this;
