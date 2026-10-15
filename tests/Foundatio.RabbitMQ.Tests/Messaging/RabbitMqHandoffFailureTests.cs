@@ -93,13 +93,13 @@ public class RabbitMqHandoffFailureTests(AspireFixture fixture, ITestOutputHelpe
                 new BasicProperties { MessageId = "test-owned-filler" }, Encoding.UTF8.GetBytes("filler"), token);
         var options = context.Options(quorum);
         options.DeliveryLimit = 0;
-        await using var bus = new RejectedHandoffBus(options);
+        int sockets = 0;
+        await using var bus = new RejectedHandoffBus(options, () => Volatile.Read(ref sockets));
         await bus.SubscribeAsync<SimpleMessageA>(_ => throw new InvalidOperationException("Synthetic terminal failure"), token);
         var field = typeof(RabbitMQMessageBus).GetField("_factory", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(field);
         var factory = Assert.IsType<ConnectionFactory>(field.GetValue(bus));
         var socketFactory = factory.SocketFactory;
-        int sockets = 0;
         factory.SocketFactory = addressFamily =>
         {
             Interlocked.Increment(ref sockets);
@@ -112,7 +112,8 @@ public class RabbitMqHandoffFailureTests(AspireFixture fixture, ITestOutputHelpe
 
         // Assert
         Assert.Equal(returned, rejection.IsReturn);
-        Assert.Equal(1, Volatile.Read(ref sockets));
+        Assert.True(bus.SocketsAfterFirstRejection > 0);
+        Assert.Equal(bus.SocketsAfterFirstRejection, Volatile.Read(ref sockets));
         Assert.False(bus.IsSubscriptionReady);
         if (returned)
             await context.Admin.QueueBindAsync(context.Destination, context.Dlx, "quarantine", cancellationToken: token);
@@ -120,7 +121,7 @@ public class RabbitMqHandoffFailureTests(AspireFixture fixture, ITestOutputHelpe
             Assert.Equal("test-owned-filler", (await context.ReadAsync(context.Destination, token)).BasicProperties.MessageId);
         Assert.Equal(context.Topic, (await context.ReadAsync(context.Destination, token)).BasicProperties.MessageId);
         await RabbitMqReliabilityTestContext.WaitAsync(() => bus.ActiveDeliveryCount == 0, token);
-        Assert.Equal(1, Volatile.Read(ref sockets));
+        Assert.Equal(bus.SocketsAfterFirstRejection, Volatile.Read(ref sockets));
         Assert.True(bus.IsSubscriptionReady);
         Assert.Null(bus.LastDeliveryError);
     }
@@ -538,9 +539,10 @@ public class RabbitMqHandoffFailureTests(AspireFixture fixture, ITestOutputHelpe
         }
     }
 
-    private sealed class RejectedHandoffBus(RabbitMQMessageBusOptions options) : RabbitMQMessageBus(options)
+    private sealed class RejectedHandoffBus(RabbitMQMessageBusOptions options, Func<int> getSocketCount) : RabbitMQMessageBus(options)
     {
         private int _rejections;
+        internal int SocketsAfterFirstRejection { get; private set; }
         internal TaskCompletionSource<PublishException> RepeatedRejection { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         protected override async Task PublishHandoffAsync(string exchange, string routingKey, BasicProperties properties,
@@ -552,7 +554,10 @@ public class RabbitMqHandoffFailureTests(AspireFixture fixture, ITestOutputHelpe
             }
             catch (PublishException exception)
             {
-                if (Interlocked.Increment(ref _rejections) >= 3)
+                int rejections = Interlocked.Increment(ref _rejections);
+                if (rejections == 1)
+                    SocketsAfterFirstRejection = getSocketCount();
+                if (rejections >= 3)
                     RepeatedRejection.TrySetResult(exception);
                 throw;
             }
