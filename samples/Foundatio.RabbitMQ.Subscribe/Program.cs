@@ -7,12 +7,14 @@ using System.Threading;
 using System.Threading.Tasks;
 using Foundatio.Messaging;
 using Foundatio.RabbitMQ;
+using Foundatio.Utility;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using RabbitMQ.Client;
 
 Option<string> connectionStringOption = new("--connection-string")
 {
@@ -56,7 +58,7 @@ Option<ushort> prefetchCountOption = new("--prefetch-count")
 
 Option<long> deliveryLimitOption = new("--delivery-limit")
 {
-    Description = "Maximum delivery attempts before discarding",
+    Description = "Maximum failed redeliveries after the initial attempt before terminal handling",
     DefaultValueFactory = _ => 2
 };
 
@@ -78,6 +80,21 @@ Option<LogLevel> logLevelOption = new("--log-level")
     DefaultValueFactory = _ => LogLevel.Information
 };
 
+Option<string> queueTypeOption = new("--queue-type")
+{
+    Description = "Queue type: classic or quorum (does not convert existing queues)",
+    DefaultValueFactory = _ => "classic"
+};
+Option<bool> requiredOption = new("--require-successful-dispatch") { Description = "Require matching handlers and a quarantine destination" };
+Option<string> deadLetterOption = new("--dead-letter-exchange") { Description = "Preprovisioned terminal exchange" };
+Option<bool> provisionOption = new("--provision-quarantine") { Description = "Create the sample's bounded durable quarantine topology" };
+Option<int> failEveryOption = new("--fail-every") { Description = "Permanently fail every Nth sample order; zero disables failures" };
+Option<long> maxBytesOption = new("--max-length-bytes")
+{
+    Description = "Ready-message byte limit for the sample source and quarantine queues",
+    DefaultValueFactory = _ => 16 * 1024 * 1024
+};
+
 RootCommand rootCommand = new("RabbitMQ Order Subscriber Sample")
 {
     connectionStringOption,
@@ -90,10 +107,13 @@ RootCommand rootCommand = new("RabbitMQ Order Subscriber Sample")
     deliveryLimitOption,
     subscriberCountOption,
     groupIdOption,
-    logLevelOption
+    logLevelOption, queueTypeOption, requiredOption, deadLetterOption, provisionOption, failEveryOption, maxBytesOption
 };
 
-rootCommand.SetAction(parseResult =>
+rootCommand.SetAction(RunSubscriberAsync);
+return await rootCommand.Parse(args).InvokeAsync();
+
+async Task RunSubscriberAsync(ParseResult parseResult)
 {
     string? connectionString = parseResult.GetValue(connectionStringOption);
     string? hosts = parseResult.GetValue(hostsOption);
@@ -107,26 +127,24 @@ rootCommand.SetAction(parseResult =>
     string? groupId = parseResult.GetValue(groupIdOption);
     LogLevel logLevel = parseResult.GetValue(logLevelOption);
 
-    return RunSubscriberAsync(
-        connectionString, hosts, topic, durable, delayed, acknowledgmentStrategy,
-        prefetchCount, deliveryLimit, subscriberCount, groupId, logLevel);
-});
+    string? queueType = parseResult.GetValue(queueTypeOption);
+    bool required = parseResult.GetValue(requiredOption);
+    string? deadLetterExchange = parseResult.GetValue(deadLetterOption);
+    bool provision = parseResult.GetValue(provisionOption);
+    int failEvery = parseResult.GetValue(failEveryOption);
+    long maxBytes = parseResult.GetValue(maxBytesOption);
+    if (queueType is not ("classic" or "quorum"))
+        throw new ArgumentException("Queue type must be classic or quorum.");
+    if ((String.Equals(queueType, "quorum", StringComparison.Ordinal) || required) && !durable)
+        throw new ArgumentException("Quorum and required-processing examples require --durable.");
+    if (acknowledgmentStrategy is not ("automatic" or "fireandforget"))
+        throw new ArgumentException("Acknowledgment strategy must be automatic or fireandforget.");
+    if (required && (!String.Equals(acknowledgmentStrategy, "automatic", StringComparison.Ordinal) || String.IsNullOrWhiteSpace(deadLetterExchange)))
+        throw new ArgumentException("Required processing needs --acknowledgment-strategy automatic and --dead-letter-exchange.");
+    ArgumentOutOfRangeException.ThrowIfNegative(failEvery);
+    ArgumentOutOfRangeException.ThrowIfLessThan(subscriberCount, 1);
+    ArgumentOutOfRangeException.ThrowIfLessThan(maxBytes, 1L);
 
-return await rootCommand.Parse(args).InvokeAsync();
-
-static async Task RunSubscriberAsync(
-    string? connectionString,
-    string? hosts,
-    string? topic,
-    bool durable,
-    bool delayed,
-    string? acknowledgmentStrategy,
-    ushort prefetchCount,
-    long deliveryLimit,
-    int subscriberCount,
-    string? groupId,
-    LogLevel logLevel)
-{
     ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
     ArgumentException.ThrowIfNullOrWhiteSpace(topic);
     ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
@@ -192,10 +210,26 @@ static async Task RunSubscriberAsync(
                                .Select(h => h.Trim()));
     }
 
-    logger.LogInformation("Config: ConnectionString={ConnectionString}, Topic={Topic}, Durable={Durable}, AckStrategy={AckStrategy}, PrefetchCount={PrefetchCount}, DeliveryLimit={DeliveryLimit}, SubscriberCount={SubscriberCount}, GroupId={GroupId}",
-        connectionString, topic, durable, ackStrategy, prefetchCount, deliveryLimit, subscriberCount, groupId);
+    logger.LogInformation("Config: Topic={Topic}, Durable={Durable}, AckStrategy={AckStrategy}, PrefetchCount={PrefetchCount}, DeliveryLimit={DeliveryLimit}, SubscriberCount={SubscriberCount}, GroupId={GroupId}",
+        topic, durable, ackStrategy, prefetchCount, deliveryLimit, subscriberCount, groupId);
     if (hostsList.Count > 0)
         logger.LogInformation("Hosts: {Hosts}", String.Join(", ", hostsList));
+
+    if (provision)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(deadLetterExchange);
+        using var setup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var uri = new Uri(connectionString);
+        var factory = new ConnectionFactory { Uri = uri };
+        var endpoints = RabbitMQEndpointResolver.CreateEndpoints(factory, hostsList);
+        await using var connection = await factory.CreateConnectionAsync(endpoints, setup.Token);
+        await using var channel = await connection.CreateChannelAsync(cancellationToken: setup.Token);
+        await channel.ExchangeDeclareAsync(deadLetterExchange, "direct", true, cancellationToken: setup.Token);
+        await channel.QueueDeclareAsync($"{deadLetterExchange}-queue", true, false, false,
+            new Dictionary<string, object?> { [RabbitMQConstants.QueueTypeArgument] = queueType, [RabbitMQConstants.MaxLengthBytesArgument] = maxBytes, [RabbitMQConstants.OverflowArgument] = "reject-publish" },
+            cancellationToken: setup.Token);
+        await channel.QueueBindAsync($"{deadLetterExchange}-queue", deadLetterExchange, "quarantine", cancellationToken: setup.Token);
+    }
 
     var messageBuses = new List<IMessageBus>(subscriberCount);
     var subscriptions = new List<Task>(subscriberCount);
@@ -222,7 +256,13 @@ static async Task RunSubscriberAsync(
                 SubscriptionQueueAutoDelete = !durable,
                 PrefetchCount = prefetchCount,
                 DeliveryLimit = deliveryLimit,
-                LoggerFactory = loggerFactory
+                LoggerFactory = loggerFactory,
+                RequireSuccessfulDispatch = required,
+                DeadLetterExchange = deadLetterExchange,
+                DeadLetterRoutingKey = "quarantine",
+                Overflow = QueueOverflowBehavior.RejectPublish,
+                DeadLetterStrategy = String.Equals(queueType, "quorum", StringComparison.Ordinal) && !String.IsNullOrWhiteSpace(deadLetterExchange) ? DeadLetterStrategy.AtLeastOnce : null,
+                Arguments = new Dictionary<string, object?> { [RabbitMQConstants.QueueTypeArgument] = queueType, [RabbitMQConstants.MaxLengthBytesArgument] = maxBytes }
             };
 
             RabbitMQMessageBus messageBus = new(options);
@@ -230,6 +270,8 @@ static async Task RunSubscriberAsync(
 
             subscriptions.Add(messageBus.SubscribeAsync<OrderEvent>(order =>
             {
+                if (failEvery > 0 && order.SequenceNumber % failEvery == 0)
+                    throw new InvalidOperationException($"Synthetic failure for sample order {order.SequenceNumber}");
                 int processed = Interlocked.Increment(ref totalProcessed);
                 TimeSpan latency = DateTimeOffset.UtcNow - order.CreatedAt;
                 logger.LogInformation(
@@ -271,7 +313,7 @@ static async Task RunSubscriberAsync(
     {
         logger.LogInformation("Shutting down. Total orders processed: {Count}", totalProcessed);
         foreach (var messageBus in messageBuses)
-            messageBus.Dispose();
+            await messageBus.DisposeAsync();
 
         logger.LogInformation("All subscribers stopped.");
     }
