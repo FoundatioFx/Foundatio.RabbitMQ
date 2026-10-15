@@ -86,6 +86,10 @@ The branch guides describe the companion implementation, including broker dead-l
 
 If the broker explicitly NACKs a classic retry publication, the original remains unacknowledged and the handler retries locally with backoff. This avoids waiting for space in a full source queue that the same consumer needs to drain. These attempts count toward `DeliveryLimit`, but their count cannot be persisted across connection loss; replay can repeat them. `DeliveryLimit = -1` remains unlimited and can block later deliveries. Unroutable returns, denied permissions, and ambiguous confirmations retain the original until repair or cancellation; they are not treated as successful transfers.
 
+With Automatic acknowledgements, channel loss now cancels the in-flight handler's token so cooperative handlers can stop while RabbitMQ redelivers. Cancellation cannot undo side effects or force a handler to stop; handlers must still tolerate duplicates. FireAndForget remains the default, and its already-acknowledged handlers may finish after channel loss.
+
+A rejected local retry sets `LastDeliveryError` and reports `IsSubscriptionReady = false` while the delivery remains blocked. Successful processing or completed terminal handling clears these diagnostics. Explicit broker rejections reuse the healthy handoff connection; transport failures still trigger reconnection.
+
 For important work, provision and monitor an error queue, use finite prefetch and suitable capacity policies, and plan how to replay or remove failures. Replication and broker-managed at-least-once dead-lettering are quorum capabilities; changing a builder option cannot convert an existing classic queue.
 
 ### Delayed message delivery
