@@ -63,6 +63,121 @@ public class RabbitMqLifecycleSafetyTests(AspireFixture fixture, ITestOutputHelp
     }
 
     [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(true, true, true)]
+    public async Task SubscribeAsync_AfterChannelReplacement_CancelsOriginalHandlerAsync(bool rabbitMq43, bool quorum, bool required)
+    {
+        Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
+
+        // Arrange
+        using var timeout = CreateTimeout();
+        var token = timeout.Token;
+        string connectionString = rabbitMq43 ? fixture.MessagingPriority43ConnectionString! : fixture.MessagingConnectionString!;
+        await using var context = await RabbitMqReliabilityTestContext.CreateAsync(connectionString, Log, token);
+        var options = context.Options(quorum);
+        options.RequireSuccessfulDispatch = required;
+        await using var bus = new RabbitMQMessageBus(options);
+        var first = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var replacement = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int attempts = 0;
+        await bus.SubscribeAsync<SimpleMessageA>(async (_, handlerToken) =>
+        {
+            if (Interlocked.Increment(ref attempts) == 1)
+            {
+                first.TrySetResult(handlerToken);
+                await Task.Delay(Timeout.InfiniteTimeSpan, handlerToken);
+            }
+            else
+            {
+                replacement.TrySetResult(handlerToken);
+                await release.Task.WaitAsync(handlerToken);
+            }
+        }, token);
+        await bus.PublishAsync(new SimpleMessageA { Data = context.Topic }, cancellationToken: token);
+        var originalToken = await first.Task.WaitAsync(token);
+        var channel = GetField<IChannel>(bus, "_subscriberChannel");
+
+        try
+        {
+            // Act
+            await channel.CloseAsync(cancellationToken: token);
+            var replacementToken = await replacement.Task.WaitAsync(token);
+
+            // Assert
+            Assert.True(originalToken.IsCancellationRequested);
+            Assert.False(replacementToken.IsCancellationRequested);
+            Assert.False(token.IsCancellationRequested);
+            release.TrySetResult();
+            await RabbitMqReliabilityTestContext.WaitAsync(() => bus.ActiveDeliveryCount == 0, token);
+            Assert.Equal(2, Volatile.Read(ref attempts));
+            Assert.True(bus.IsSubscriptionReady);
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task SubscribeAsync_AfterChannelReplacement_PreservesBestEffortHandlerAsync(bool rabbitMq43, bool quorum)
+    {
+        Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
+
+        // Arrange
+        using var timeout = CreateTimeout();
+        var token = timeout.Token;
+        string connectionString = rabbitMq43 ? fixture.MessagingPriority43ConnectionString! : fixture.MessagingConnectionString!;
+        await using var context = await RabbitMqReliabilityTestContext.CreateAsync(connectionString, Log, token);
+        var options = context.Options(quorum);
+        options.AcknowledgementStrategy = AcknowledgementStrategy.FireAndForget;
+        options.RequireSuccessfulDispatch = false;
+        await using var bus = new RabbitMQMessageBus(options);
+        var entered = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int attempts = 0;
+        await bus.SubscribeAsync<SimpleMessageA>(async (_, handlerToken) =>
+        {
+            Interlocked.Increment(ref attempts);
+            entered.TrySetResult(handlerToken);
+            await release.Task.WaitAsync(handlerToken);
+            completed.TrySetResult();
+        }, token);
+        await bus.PublishAsync(new SimpleMessageA { Data = context.Topic }, cancellationToken: token);
+        var handlerToken = await entered.Task.WaitAsync(token);
+        var channel = GetField<IChannel>(bus, "_subscriberChannel");
+
+        try
+        {
+            // Act
+            await channel.CloseAsync(cancellationToken: token);
+            await RabbitMqReliabilityTestContext.WaitAsync(() => bus.IsSubscriptionReady
+                && !ReferenceEquals(channel, GetField<IChannel>(bus, "_subscriberChannel")), token);
+
+            // Assert
+            Assert.False(handlerToken.IsCancellationRequested);
+            release.TrySetResult();
+            await completed.Task.WaitAsync(token);
+            Assert.Equal(1, Volatile.Read(ref attempts));
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+    }
+
+    [Theory]
     [InlineData(AcknowledgementStrategy.FireAndForget)]
     [InlineData(AcknowledgementStrategy.Automatic)]
     public async Task SubscribeAsync_AfterLastSubscriptionCancellation_StopsConsumerAndResubscribesAsync(
@@ -478,6 +593,22 @@ public class RabbitMqLifecycleSafetyTests(AspireFixture fixture, ITestOutputHelp
         Assert.Equal(0u, (await context.Admin.QueueDeclarePassiveAsync(context.Source, token)).MessageCount);
     }
 
+    [Fact]
+    public async Task SubscribeAsync_WithSubscriptionOverride_UsesHookForSetupAndMaintenanceAsync()
+    {
+        // Arrange
+        using var timeout = CreateTimeout();
+        await using var bus = new OverriddenSubscriptionBus(new RabbitMQMessageBusOptions { ConnectionString = "amqp://localhost" });
+
+        // Act
+        await bus.SubscribeAsync<SimpleMessageA>(_ => { }, timeout.Token);
+
+        // Assert
+        Assert.Equal(1, bus.Calls);
+        Assert.True(await bus.MaintenanceCalled.Task.WaitAsync(timeout.Token));
+        Assert.True(bus.Calls >= 2);
+    }
+
     private CancellationTokenSource CreateTimeout()
     {
         var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
@@ -505,6 +636,25 @@ public class RabbitMqLifecycleSafetyTests(AspireFixture fixture, ITestOutputHelp
             InitializationStarted.TrySetResult();
             await _releaseInitialization.Task.WaitAsync(cancellationToken);
             await base.EnsureTopicCreatedAsync(cancellationToken);
+        }
+    }
+
+    private sealed class OverriddenSubscriptionBus(RabbitMQMessageBusOptions options) : RabbitMQMessageBus(options)
+    {
+        private int _calls;
+        internal int Calls => Volatile.Read(ref _calls);
+        internal TaskCompletionSource<bool> MaintenanceCalled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override Task EnsureTopicCreatedAsync(CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Subscription setup bypassed the override.");
+
+        protected override Task EnsureTopicSubscriptionAsync(CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref _calls) > 1)
+                MaintenanceCalled.TrySetResult(cancellationToken == DisposedCancellationToken);
+            else
+                Assert.Equal(DisposedCancellationToken, cancellationToken);
+            return Task.CompletedTask;
         }
     }
 }

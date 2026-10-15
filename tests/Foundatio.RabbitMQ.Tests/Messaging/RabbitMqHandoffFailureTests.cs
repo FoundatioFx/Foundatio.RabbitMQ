@@ -14,6 +14,7 @@ using Foundatio.Tests.Messaging;
 using Foundatio.Xunit;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
+using RabbitMQ.Client.Exceptions;
 using Xunit;
 
 namespace Foundatio.RabbitMQ.Tests.Messaging;
@@ -64,6 +65,64 @@ public class RabbitMqHandoffFailureTests(AspireFixture fixture, ITestOutputHelpe
         Assert.True(failed.IsSubscriptionReady);
         _logger.LogInformation("Recovered accepted={PublicationWasAccepted}; attempts={ExpectedAttempts}; independent deliveries=1; stableId={MessageId}",
             publicationWasAccepted, expectedAttempts, id);
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(true, true, true)]
+    public async Task SubscribeAsync_WithBrokerRejectedHandoff_ReusesHealthyTransportAsync(bool rabbitMq43, bool quorum, bool returned)
+    {
+        Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
+
+        // Arrange
+        using var timeout = CreateTimeout();
+        var token = timeout.Token;
+        string connectionString = rabbitMq43 ? fixture.MessagingPriority43ConnectionString! : fixture.MessagingConnectionString!;
+        await using var context = await RabbitMqReliabilityTestContext.CreateAsync(connectionString, Log, token);
+        await context.CreateDestinationAsync(token, bounded: true);
+        if (returned)
+            await context.Admin.QueueUnbindAsync(context.Destination, context.Dlx, "quarantine", cancellationToken: token);
+        else
+            await context.Admin.BasicPublishAsync(context.Dlx, "quarantine", true,
+                new BasicProperties { MessageId = "test-owned-filler" }, Encoding.UTF8.GetBytes("filler"), token);
+        var options = context.Options(quorum);
+        options.DeliveryLimit = 0;
+        await using var bus = new RejectedHandoffBus(options);
+        await bus.SubscribeAsync<SimpleMessageA>(_ => throw new InvalidOperationException("Synthetic terminal failure"), token);
+        var field = typeof(RabbitMQMessageBus).GetField("_factory", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        var factory = Assert.IsType<ConnectionFactory>(field.GetValue(bus));
+        var socketFactory = factory.SocketFactory;
+        int sockets = 0;
+        factory.SocketFactory = addressFamily =>
+        {
+            Interlocked.Increment(ref sockets);
+            return socketFactory(addressFamily);
+        };
+
+        // Act
+        await bus.PublishAsync(new SimpleMessageA { Data = context.Topic }, new MessageOptions { UniqueId = context.Topic }, token);
+        var rejection = await bus.RepeatedRejection.Task.WaitAsync(token);
+
+        // Assert
+        Assert.Equal(returned, rejection.IsReturn);
+        Assert.Equal(1, Volatile.Read(ref sockets));
+        Assert.False(bus.IsSubscriptionReady);
+        if (returned)
+            await context.Admin.QueueBindAsync(context.Destination, context.Dlx, "quarantine", cancellationToken: token);
+        else
+            Assert.Equal("test-owned-filler", (await context.ReadAsync(context.Destination, token)).BasicProperties.MessageId);
+        Assert.Equal(context.Topic, (await context.ReadAsync(context.Destination, token)).BasicProperties.MessageId);
+        await RabbitMqReliabilityTestContext.WaitAsync(() => bus.ActiveDeliveryCount == 0, token);
+        Assert.Equal(1, Volatile.Read(ref sockets));
+        Assert.True(bus.IsSubscriptionReady);
+        Assert.Null(bus.LastDeliveryError);
     }
 
     [Theory]
@@ -168,6 +227,76 @@ public class RabbitMqHandoffFailureTests(AspireFixture fixture, ITestOutputHelpe
         Assert.Null(await context.Admin.BasicGetAsync(context.Source, false, token));
         _logger.LogInformation("Injected accepted={PublicationWasAccepted}; subscriber stayed open; retainedCopies={ExpectedCopies}; id={MessageId}",
             publicationWasAccepted, expectedCopies, id);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task SubscribeAsync_WithFullClassicRetryQueue_ReportsBlockedUntilProgressAsync(bool rabbitMq43, bool required)
+    {
+        Assert.SkipWhen(!fixture.IsAvailable, "RabbitMQ infrastructure not available");
+
+        // Arrange
+        using var timeout = CreateTimeout();
+        var token = timeout.Token;
+        string connectionString = rabbitMq43 ? fixture.MessagingPriority43ConnectionString! : fixture.MessagingConnectionString!;
+        await using var context = await RabbitMqReliabilityTestContext.CreateAsync(connectionString, Log, token);
+        var options = context.Options();
+        options.RequireSuccessfulDispatch = required;
+        options.DeliveryLimit = -1;
+        options.Arguments!["x-max-length"] = 1L;
+        options.Overflow = QueueOverflowBehavior.RejectPublish;
+        await using var bus = new RabbitMQMessageBus(options);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fail = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var retried = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var repair = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var healthy = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int attempts = 0;
+        await bus.SubscribeAsync<SimpleMessageA>(async message =>
+        {
+            if (message.Data == "healthy")
+            {
+                healthy.TrySetResult();
+                return;
+            }
+            if (Interlocked.Increment(ref attempts) == 1)
+            {
+                entered.TrySetResult();
+                await fail.Task.WaitAsync(token);
+                throw new InvalidOperationException("Synthetic retry after source fills");
+            }
+            retried.TrySetResult();
+            await repair.Task.WaitAsync(token);
+        }, token);
+
+        try
+        {
+            // Act
+            await bus.PublishAsync(new SimpleMessageA { Data = "original" }, cancellationToken: token);
+            await entered.Task.WaitAsync(token);
+            await bus.PublishAsync(new SimpleMessageA { Data = "healthy" }, cancellationToken: token);
+            fail.TrySetResult();
+            await retried.Task.WaitAsync(token);
+
+            // Assert
+            Assert.False(bus.IsSubscriptionReady);
+            Assert.IsType<PublishException>(bus.LastDeliveryError);
+            Assert.False(healthy.Task.IsCompleted);
+            repair.TrySetResult();
+            await healthy.Task.WaitAsync(token);
+            await RabbitMqReliabilityTestContext.WaitAsync(() => bus.ActiveDeliveryCount == 0, token);
+            Assert.Equal(2, Volatile.Read(ref attempts));
+            Assert.True(bus.IsSubscriptionReady);
+            Assert.Null(bus.LastDeliveryError);
+        }
+        finally
+        {
+            fail.TrySetResult();
+            repair.TrySetResult();
+        }
     }
 
     [Theory]
@@ -406,6 +535,27 @@ public class RabbitMqHandoffFailureTests(AspireFixture fixture, ITestOutputHelpe
                 throw new MessageBusException("Synthetic caller-observed handoff failure");
             }
             await base.PublishHandoffAsync(exchange, routingKey, properties, body, cancellationToken);
+        }
+    }
+
+    private sealed class RejectedHandoffBus(RabbitMQMessageBusOptions options) : RabbitMQMessageBus(options)
+    {
+        private int _rejections;
+        internal TaskCompletionSource<PublishException> RepeatedRejection { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override async Task PublishHandoffAsync(string exchange, string routingKey, BasicProperties properties,
+            ReadOnlyMemory<byte> body, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await base.PublishHandoffAsync(exchange, routingKey, properties, body, cancellationToken);
+            }
+            catch (PublishException exception)
+            {
+                if (Interlocked.Increment(ref _rejections) >= 3)
+                    RepeatedRejection.TrySetResult(exception);
+                throw;
+            }
         }
     }
 }

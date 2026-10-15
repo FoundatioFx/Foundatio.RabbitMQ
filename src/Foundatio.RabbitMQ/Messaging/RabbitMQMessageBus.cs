@@ -33,6 +33,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
     private AsyncEventingBasicConsumer? _consumer;
     private volatile bool _isPublisherBlocked;
     private volatile string? _publisherBlockedReason;
+    private readonly AsyncLocal<Subscriber?> _initializingSubscriber = new();
+    private readonly AsyncLocal<CancellationToken> _deliveryCancellation = new();
     private readonly AsyncLock _subscriberLock = new();
     private readonly CancellationTokenSource _shutdown = new();
     private readonly ConcurrentDictionary<string, CancellationTokenRegistration> _subscriberRegistrations = new();
@@ -188,7 +190,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         }
     }
 
-    protected override async Task SubscribeImplAsync<T>(Func<T, CancellationToken, Task> handler, CancellationToken cancellationToken)
+    protected override Task SubscribeImplAsync<T>(Func<T, CancellationToken, Task> handler, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(handler);
         var subscriber = new Subscriber
@@ -203,7 +205,11 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
                         throw new InvalidDeliveryException("The delivery cannot be assigned to the required handler.");
                     return;
                 }
-                using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, _shutdownToken);
+                var deliveryToken = _options.AcknowledgementStrategy == AcknowledgementStrategy.Automatic && !_options.RequireSuccessfulDispatch
+                    ? _deliveryCancellation.Value : default;
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(token,
+                    deliveryToken.CanBeCanceled ? deliveryToken : _shutdownToken);
+                linked.Token.ThrowIfCancellationRequested();
                 await handler(typed, linked.Token).WaitAsync(linked.Token).AnyContext();
             }
         };
@@ -220,31 +226,48 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
             _subscriptionChanged.Set();
         });
         _subscriberRegistrations[subscriber.Id] = registration;
+        _permanentSubscriberFault = false;
+        lock (_maintenanceSync)
+            _maintenanceTask ??= MaintainSubscriptionAsync();
+        // The base calls EnsureTopicSubscriptionAsync next; keep this method synchronous
+        // so that call receives its own subscriber context even with concurrent subscriptions.
+        _initializingSubscriber.Value = subscriber;
+        return Task.CompletedTask;
+    }
+
+    protected override async Task EnsureTopicSubscriptionAsync(CancellationToken cancellationToken)
+    {
+        var subscriber = _initializingSubscriber.Value;
+        _initializingSubscriber.Value = null;
+        if (subscriber is null)
+        {
+            await InitializeSubscriptionAsync(cancellationToken).AnyContext();
+            return;
+        }
+
+        var callerToken = subscriber.CancellationToken;
         try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            _permanentSubscriberFault = false;
-            lock (_maintenanceSync)
-                _maintenanceTask ??= MaintainSubscriptionAsync();
+            callerToken.ThrowIfCancellationRequested();
             // One caller can stop waiting without cancelling setup needed by other subscribers.
             // Maintenance is already running so abandoned initialization cannot leave an orphan consumer.
-            var initialization = InitializeSubscriptionAsync(DisposedCancellationToken);
+            var initialization = InitializeSubscriptionAsync(cancellationToken);
             try
             {
-                await initialization.WaitAsync(cancellationToken).AnyContext();
+                await initialization.WaitAsync(callerToken).AnyContext();
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (callerToken.IsCancellationRequested)
             {
                 _ = ObserveSubscriptionInitializationAsync(initialization);
                 throw;
             }
-            cancellationToken.ThrowIfCancellationRequested();
+            callerToken.ThrowIfCancellationRequested();
         }
         catch
         {
             _subscribers.TryRemove(subscriber.Id, out _);
-            _subscriberRegistrations.TryRemove(subscriber.Id, out _);
-            registration.Unregister();
+            if (_subscriberRegistrations.TryRemove(subscriber.Id, out var registration))
+                registration.Unregister();
             _subscriptionChanged.Set();
             throw;
         }
@@ -264,9 +287,6 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
             _logger.LogDebug(exception, "Subscription initialization ended after its caller stopped waiting");
         }
     }
-
-    protected override Task EnsureTopicSubscriptionAsync(CancellationToken cancellationToken) =>
-        InitializeSubscriptionAsync(cancellationToken);
 
     private async Task InitializeSubscriptionAsync(CancellationToken cancellationToken)
     {
@@ -380,7 +400,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
                     continue;
                 try
                 {
-                    await InitializeSubscriptionAsync(_shutdownToken).AnyContext();
+                    await EnsureTopicSubscriptionAsync(DisposedCancellationToken).AnyContext();
                 }
                 catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
                 {
@@ -474,6 +494,7 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         var token = lifetime?.Token ?? epoch.Token;
         using var scope = _deliveryScope(_logger, envelope.BasicProperties.MessageId, envelope.DeliveryTag);
         Interlocked.Increment(ref _activeDeliveries);
+        bool blocked = false;
         try
         {
             long retryCount = -1;
@@ -494,6 +515,21 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
                     {
                         while (!await DispatchRequiredAsync(message, token).AnyContext())
                             await Task.Delay(TimeSpan.FromMilliseconds(100), token).AnyContext();
+                    }
+                    else if (_options.AcknowledgementStrategy == AcknowledgementStrategy.Automatic)
+                    {
+                        // Shared dispatch passes the subscription token; flow this delivery's
+                        // token through its scheduled callbacks without replacing the dispatcher.
+                        var previous = _deliveryCancellation.Value;
+                        _deliveryCancellation.Value = token;
+                        try
+                        {
+                            await SendMessageToSubscribersAsync(message).WaitAsync(token).AnyContext();
+                        }
+                        finally
+                        {
+                            _deliveryCancellation.Value = previous;
+                        }
                     }
                     else
                     {
@@ -555,6 +591,12 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
                     {
                         // The source queue can be full while this callback prevents it from draining.
                         // Keep the original unacknowledged and consume the same finite retry budget locally.
+                        _deliveryError = exception;
+                        if (!blocked)
+                        {
+                            Interlocked.Increment(ref _blockedDeliveries);
+                            blocked = true;
+                        }
                         retryCount++;
                         _logger.LogWarning(exception, "Retry publication was rejected; retrying the retained delivery locally");
                         await Task.Delay(TimeSpan.FromSeconds(Math.Min(retryCount, 10)), token).AnyContext();
@@ -583,6 +625,8 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
         }
         finally
         {
+            if (blocked)
+                Interlocked.Decrement(ref _blockedDeliveries);
             Interlocked.Decrement(ref _activeDeliveries);
         }
     }
@@ -710,6 +754,11 @@ public class RabbitMQMessageBus : MessageBusBase<RabbitMQMessageBusOptions>
                         cancellationToken).AnyContext();
                 }
                 await _handoffChannel.BasicPublishAsync(exchange, routingKey, mandatory: true, properties, body, cancellationToken).AnyContext();
+            }
+            catch (PublishException) when (_handoffConnection is { IsOpen: true } && _handoffChannel is { IsOpen: true })
+            {
+                // A NACK or mandatory return rejects this publication, not the transport.
+                throw;
             }
             catch
             {
