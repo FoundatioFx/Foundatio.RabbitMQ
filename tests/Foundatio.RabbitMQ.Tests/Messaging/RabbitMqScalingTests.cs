@@ -153,6 +153,7 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
 
             Assert.True(deliveredWhileBlocked <= prefetchCount,
                 $"Expected at most {prefetchCount} messages delivered while consumer is blocked, but got {deliveredWhileBlocked}");
+            Assert.True(deliveredWhileBlocked > 0, "The test must observe a delivery before checking prefetch.");
         }
         finally
         {
@@ -476,6 +477,15 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
         _logger.LogInformation("Message loss rate: {LossRate:P2} (published={Pub}, received rolling={Recv})",
             lossRate, published.Count, receivedRolling);
         Assert.True(lossRate < 0.1, $"Message loss rate should be under 10% with quorum queues, was {lossRate:P2}");
+
+        // Reconcile confirmed publication IDs; duplicates cannot hide missing work.
+        string[] expected = published.Distinct().OrderBy(id => id).ToArray();
+        using var drain = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
+        drain.CancelAfter(TimeSpan.FromSeconds(30));
+        await RabbitMqReliabilityTestContext.WaitAsync(() => expected.All(received.Contains), drain.Token);
+        Assert.Empty(expected.Except(received));
+        _logger.LogInformation("Confirmed publications reconciled: {Count}; duplicate deliveries: {Duplicates}",
+            expected.Length, received.Count - received.Distinct().Count());
     }
 
     [Fact]
@@ -580,6 +590,102 @@ public class RabbitMqScalingTests(AspireFixture fixture, ITestOutputHelper outpu
             holdGate.Set();
             if (subscriber1 is not null)
                 await subscriber1.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task SubscribeAsync_AfterRawConsumerDisconnect_RecoversEveryUnacknowledgedMessage()
+    {
+        Assert.SkipWhen(!fixture.ChaosClusterAvailable, "Chaos cluster not available");
+
+        // Arrange
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(60));
+        var token = timeout.Token;
+        string topic = $"scaling-inflight-{Guid.NewGuid():N}";
+        string queueName = $"{topic}-inflight";
+        string connectionString = Chaos.GetConnectionString("chaos-1");
+        string[] expected = Enumerable.Range(0, 3).Select(i => $"inflight-{i}").ToArray();
+        var factory = new ConnectionFactory
+        {
+            Uri = new Uri(connectionString),
+            AutomaticRecoveryEnabled = false
+        };
+        await using var adminConnection = await factory.CreateConnectionAsync(token);
+        await using var admin = await adminConnection.CreateChannelAsync(cancellationToken: token);
+        var arguments = new System.Collections.Generic.Dictionary<string, object?>
+        {
+            ["x-queue-type"] = "quorum",
+            ["x-delivery-limit"] = 5L
+        };
+
+        try
+        {
+            await admin.ExchangeDeclareAsync(topic, "fanout", durable: true, cancellationToken: token);
+            await admin.QueueDeclareAsync(queueName, durable: true, exclusive: false, autoDelete: false,
+                arguments: arguments, cancellationToken: token);
+            await admin.QueueBindAsync(queueName, topic, String.Empty, cancellationToken: token);
+            await using var publisher = new RabbitMQMessageBus(o => o
+                .ConnectionString(connectionString)
+                .Topic(topic)
+                .PublisherConfirmsEnabled(true)
+                .LoggerFactory(Log));
+            foreach (string id in expected)
+                await publisher.PublishAsync(new SimpleMessageA { Data = id }, cancellationToken: token);
+
+            // BasicGet with autoAck=false creates real outstanding deliveries without
+            // blocking a callback. Graceful disposal of a provider with a deliberately
+            // blocked handler waits for that handler and is not a disconnect injector.
+            // Act
+            await using (var firstConnection = await factory.CreateConnectionAsync(token))
+            await using (var firstChannel = await firstConnection.CreateChannelAsync(cancellationToken: token))
+            {
+                var deliveryTags = new System.Collections.Generic.HashSet<ulong>();
+                foreach (string _ in expected)
+                {
+                    var delivery = await firstChannel.BasicGetAsync(queueName, autoAck: false, cancellationToken: token);
+                    Assert.NotNull(delivery);
+                    Assert.True(deliveryTags.Add(delivery.DeliveryTag));
+                }
+                Assert.Equal(expected.Length, deliveryTags.Count);
+                var held = await firstChannel.QueueDeclarePassiveAsync(queueName, token);
+                Assert.Equal(0u, held.MessageCount);
+                _logger.LogInformation("Held {Count} unacknowledged deliveries before disconnect", deliveryTags.Count);
+            }
+
+            // Closing the first consumer's connection returns its unacknowledged
+            // deliveries to the durable queue. Wait on broker state, not a fixed sleep.
+            while ((await admin.QueueDeclarePassiveAsync(queueName, token)).MessageCount < expected.Length)
+                await Task.Delay(TimeSpan.FromMilliseconds(100), token);
+
+            var received = new ConcurrentDictionary<string, int>();
+            var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            await using var subscriber = new RabbitMQMessageBus(o => o
+                .ConnectionString(connectionString)
+                .Topic(topic)
+                .SubscriptionQueueName(queueName)
+                .AcknowledgementStrategy(AcknowledgementStrategy.Automatic)
+                .PrefetchCount(5)
+                .UseQuorumQueues()
+                .DeliveryLimit(5)
+                .LoggerFactory(Log));
+            await subscriber.SubscribeAsync<SimpleMessageA>(msg =>
+            {
+                received.AddOrUpdate(msg.Data!, 1, (_, count) => count + 1);
+                if (expected.All(received.ContainsKey))
+                    completed.TrySetResult();
+            }, token);
+            await completed.Task.WaitAsync(token);
+            // Assert
+            Assert.Equal(expected.OrderBy(id => id), received.Keys.OrderBy(id => id));
+            _logger.LogInformation("Recovered all {Count} expected IDs; duplicate deliveries: {Duplicates}",
+                expected.Length, received.Values.Sum(count => count - 1));
+        }
+        finally
+        {
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await admin.QueueDeleteAsync(queueName, cancellationToken: cleanup.Token);
+            await admin.ExchangeDeleteAsync(topic, cancellationToken: cleanup.Token);
         }
     }
 }
