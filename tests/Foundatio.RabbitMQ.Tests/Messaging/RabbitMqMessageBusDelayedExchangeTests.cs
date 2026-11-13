@@ -2,7 +2,8 @@ using Xunit;
 
 namespace Foundatio.RabbitMQ.Tests.Messaging;
 
-public class RabbitMqMessageBusDelayedExchangeTests : RabbitMqMessageBusTestBase, IClassFixture<AspireFixture>
+[Collection(nameof(RabbitMqTestCollection))]
+public class RabbitMqMessageBusDelayedExchangeTests : RabbitMqMessageBusTestBase
 {
     public RabbitMqMessageBusDelayedExchangeTests(AspireFixture fixture, ITestOutputHelper output)
         : base(fixture.MessagingDelayedConnectionString ?? fixture.MessagingConnectionString!, output)

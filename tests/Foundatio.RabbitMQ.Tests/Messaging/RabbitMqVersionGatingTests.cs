@@ -9,8 +9,9 @@ using Xunit;
 
 namespace Foundatio.RabbitMQ.Tests.Messaging;
 
+[Collection(nameof(RabbitMqTestCollection))]
 public class RabbitMqVersionGatingTests(AspireFixture fixture, ITestOutputHelper output)
-    : TestWithLoggingBase(output), IClassFixture<AspireFixture>
+    : TestWithLoggingBase(output)
 {
     [Fact]
     public async Task SubscribeAsync_WithDeprecatedGlobalQos_FallsBackToPerChannelQos()
